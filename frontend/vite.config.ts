@@ -3,10 +3,6 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import vuetify from 'vite-plugin-vuetify';
 
-/* import fs from 'fs'
-import path from 'path' */
-
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
     vue({
@@ -33,8 +29,19 @@ export default defineConfig({
   },
   build: {
     sourcemap: true,
+    rollupOptions: {
+      // Removed externalizing 'firebase/auth' to avoid build errors
+      onwarn(warning, warn) {
+        if (warning.code === 'UNRESOLVED_IMPORT' && warning.source === 'firebase/auth') {
+          // Ignore unresolved import warnings for firebase/auth just in case
+          return;
+        }
+        warn(warning);
+      }
+    }
   },
   optimizeDeps: {
+    include: ['firebase/app', 'firebase/auth'],  // Add Firebase modules here
     exclude: ['vuetify'],
     entries: ['./src/**/*.vue']
   },
