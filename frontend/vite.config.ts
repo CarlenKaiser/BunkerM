@@ -41,7 +41,7 @@ export default defineConfig({
     }
   },
   optimizeDeps: {
-    include: ['firebase/app', 'firebase/auth'],  // Add Firebase modules here
+    include: ['firebase/app', 'firebase/auth'],
     exclude: ['vuetify'],
     entries: ['./src/**/*.vue']
   },
