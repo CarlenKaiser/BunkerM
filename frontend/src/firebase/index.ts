@@ -1,28 +1,28 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, connectAuthEmulator } from 'firebase/auth';
+import { getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';  // <--- import Firestore
 import { getRuntimeConfig } from '@/config/runtime';
 
 const runtimeConfig = getRuntimeConfig();
-const host = runtimeConfig.host || 'localhost';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDf6WG9a48u2qDoeAfIbqwt3Z0QxH7SzFY",
-  authDomain: "bunker-m.firebaseapp.com",
-  projectId: "bunker-m",
-  storageBucket: "bunker-m.firebasestorage.app",
-  messagingSenderId: "1017702751216",
-  appId: "1:1017702751216:web:cd9bfbf736c1505a025b35"
+  apiKey: "AIzaSyCdVR8DrCSdn0ihh-krJwTA0bBJXYN6UVQ",
+  authDomain: "cpmfgoperations-bunkerm-prod.firebaseapp.com",
+  projectId: "cpmfgoperations-bunkerm-prod",
+  storageBucket: "cpmfgoperations-bunkerm-prod.appspot.com",
+  messagingSenderId: "37053050602",
+  appId: "1:37053050602:web:e2551606bc61e71ec07193",
+  measurementId: "G-Y401HYVJRY"
 };
 
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
+
+// Initialize Firebase Auth
 const auth = getAuth(app);
 
-// Configure auth to use our proxy
-auth.config.emulator = {
-  url: `http://${host}:2000/auth/`
-};
+// Initialize Firestore database
+const db = getFirestore(app);
 
-// Override the default auth domain to use our proxy
-auth.config.authDomain = `${host}:2000`;
-
-export { auth };
+export { auth, db };
+export const firestore = getFirestore(app);
