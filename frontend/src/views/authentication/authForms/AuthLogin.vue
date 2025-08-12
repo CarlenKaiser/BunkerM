@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons-vue';
 import { useAuthStore } from '@/stores/auth';
 import { signInWithEmailAndPassword, OAuthProvider, signInWithPopup } from 'firebase/auth';
-import { auth } from '@/firebase';  // import your firebase auth instance
+import { auth } from '@/firebase';
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -48,13 +47,12 @@ async function handleLogin() {
     const userCredential = await signInWithEmailAndPassword(auth, email.value, password.value);
     const user = userCredential.user;
 
-    // Set user in store (you may want to store more user info/token as needed)
+    // Set user in store
     await authStore.setUser({
       uid: user.uid,
       email: user.email,
       displayName: user.displayName,
-      // any other user info you want
-    }, 'firebase-auth-token'); // token can be fetched if needed
+    }, 'firebase-auth-token');
 
     router.push('/dashboard');
   } catch (err: any) {
@@ -75,8 +73,6 @@ async function loginWithMicrosoft() {
     const result = await signInWithPopup(auth, provider);
     const user = result.user;
 
-    // You can get additional profile info here if needed from result.additionalUserInfo
-
     await authStore.setUser({
       uid: user.uid,
       email: user.email,
@@ -92,3 +88,74 @@ async function loginWithMicrosoft() {
   }
 }
 </script>
+
+<template>
+  <form @submit.prevent="handleLogin">
+    <div>
+      <label for="email">Email</label>
+      <input id="email" v-model="email" type="email" required />
+    </div>
+
+    <div>
+      <label for="password">Password</label>
+      <input id="password" v-model="password" type="password" required />
+    </div>
+
+    <button type="submit" :disabled="loading">Login</button>
+
+    <button
+      type="button"
+      class="ms-login-btn"
+      @click="loginWithMicrosoft"
+      :disabled="loading"
+    >
+      <span class="ms-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="1" y="1" width="10" height="10" fill="#F35325"/>
+          <rect x="13" y="1" width="10" height="10" fill="#81BC06"/>
+          <rect x="1" y="13" width="10" height="10" fill="#05A6F0"/>
+          <rect x="13" y="13" width="10" height="10" fill="#FFBA08"/>
+        </svg>
+      </span>
+      Login with Microsoft
+    </button>
+
+    <p v-if="error" class="error-message">{{ error }}</p>
+  </form>
+</template>
+
+<style scoped>
+.ms-login-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1px solid #1f2937;
+  border-radius: 6px;
+  background-color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  color: #1f2937;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  margin-top: 12px;
+}
+
+.ms-login-btn:hover {
+  background-color: #f3f4f6;
+}
+
+.ms-login-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ms-icon {
+  display: inline-flex;
+  align-items: center;
+}
+.error-message {
+  color: #d32f2f;
+  margin-top: 10px;
+}
+</style>
