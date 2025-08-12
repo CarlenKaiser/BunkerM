@@ -10,10 +10,7 @@ WORKDIR /frontend
 COPY frontend/package*.json ./
 
 # Clear npm cache, install dependencies, and verify firebase installed
-RUN npm cache clean --force && \
-    npm install && \
-    npm list firebase
-
+RUN npm cache clean --force && npm install
 # Install dev dependencies needed for TypeScript configs
 RUN npm install -D @vue/tsconfig @tsconfig/node20 @types/node typescript
 
