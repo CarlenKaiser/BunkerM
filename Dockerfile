@@ -1,42 +1,48 @@
-# Use Node.js with Alpine as base for frontend build
-FROM node:18-alpine as frontend-build
+# -------------------------------------------
+# Stage 1: Build frontend
+# -------------------------------------------
+FROM node:18-alpine AS frontend-build
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
-# Set working directory for frontend
 WORKDIR /frontend
 
-# Copy package.json and package-lock.json (if present)
+# Copy package.json and package-lock.json
 COPY frontend/package*.json ./
 
-# Clear npm cache, install dependencies, and verify firebase installed
+# Clean npm cache and install dependencies
 RUN npm cache clean --force && npm install
-# Install dev dependencies needed for TypeScript configs
+
+# Install dev dependencies needed for TypeScript and firebase resolution
 RUN npm install -D @vue/tsconfig @tsconfig/node20 @types/node typescript
 
-# Copy full frontend source code
-COPY frontend .
+# Copy all frontend source files
+COPY frontend/ .
 
-# Build the frontend (this should now succeed without unresolved firebase/auth error)
-RUN npm run build
+# Build frontend (fix firebase/auth errors by installing latest firebase)
+RUN npm install firebase@latest --save && npm run build
 
-# Create runtime config template for frontend
-RUN echo 'window.__runtime_config__ = { \
-  "API_URL": "RUNTIME_API_URL", \
-  "DYNSEC_API_URL": "RUNTIME_DYNSEC_API_URL", \
-  "AWS_BRIDGE_API_URL": "RUNTIME_AWS_BRIDGE_API_URL", \
-  "MONITOR_API_URL": "RUNTIME_MONITOR_API_URL", \
-  "host": "RUNTIME_HOST", \
-  "debug": true, \
-  "timeout": 10000, \
-  "retryAttempts": 3, \
-  "retryDelay": 1000, \
-  "headers": { \
-    "X-API-Key": "${process.env.VITE_API_KEY}", \
-    "Content-Type": "application/json" \
-  } \
-};' > /frontend/dist/config.js
+# Create runtime config.js template for frontend (inject env vars placeholders)
+RUN printf 'window.__runtime_config__ = {\n' > /frontend/dist/config.js && \
+    printf '  "API_URL": "RUNTIME_API_URL",\n' >> /frontend/dist/config.js && \
+    printf '  "DYNSEC_API_URL": "RUNTIME_DYNSEC_API_URL",\n' >> /frontend/dist/config.js && \
+    printf '  "AWS_BRIDGE_API_URL": "RUNTIME_AWS_BRIDGE_API_URL",\n' >> /frontend/dist/config.js && \
+    printf '  "MONITOR_API_URL": "RUNTIME_MONITOR_API_URL",\n' >> /frontend/dist/config.js && \
+    printf '  "host": "RUNTIME_HOST",\n' >> /frontend/dist/config.js && \
+    printf '  "debug": true,\n' >> /frontend/dist/config.js && \
+    printf '  "timeout": 10000,\n' >> /frontend/dist/config.js && \
+    printf '  "retryAttempts": 3,\n' >> /frontend/dist/config.js && \
+    printf '  "retryDelay": 1000,\n' >> /frontend/dist/config.js && \
+    printf '  "headers": {\n' >> /frontend/dist/config.js && \
+    printf '    "X-API-Key": "%s",\n' "$VITE_API_KEY" >> /frontend/dist/config.js && \
+    printf '    "Content-Type": "application/json"\n' >> /frontend/dist/config.js && \
+    printf '  }\n' >> /frontend/dist/config.js && \
+    printf '};\n' >> /frontend/dist/config.js
 
+
+# -------------------------------------------
+# Stage 2: Runtime image (backend + frontend)
+# -------------------------------------------
 
 # Use Eclipse Temurin as final base
 FROM eclipse-temurin:17-jdk-alpine
