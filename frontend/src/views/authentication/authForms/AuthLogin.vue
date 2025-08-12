@@ -49,9 +49,11 @@ async function handleLogin() {
 
     // Set user in store
     await authStore.setUser({
-      uid: user.uid,
+      id: user.uid,
       email: user.email,
-      displayName: user.displayName,
+      firstName: user.displayName?.split(' ')[0] || '',
+      lastName: user.displayName?.split(' ').slice(1).join(' ') || '',
+      createdAt: ''  // or whatever value you have here
     }, 'firebase-auth-token');
 
     router.push('/dashboard');
@@ -74,9 +76,11 @@ async function loginWithMicrosoft() {
     const user = result.user;
 
     await authStore.setUser({
-      uid: user.uid,
+      id: user.uid,
       email: user.email,
-      displayName: user.displayName,
+      firstName: user.displayName?.split(' ')[0] || '',
+      lastName: user.displayName?.split(' ').slice(1).join(' ') || '',
+      createdAt: ''  // or whatever value you have here
     }, 'firebase-auth-token');
 
     router.push('/dashboard');

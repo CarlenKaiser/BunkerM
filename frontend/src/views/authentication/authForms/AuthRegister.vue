@@ -61,9 +61,11 @@ async function validate() {
 
     // Set user in your authStore if needed
     await authStore.setUser({
-      uid: user.uid,
+      id: user.uid,
       email: user.email,
-      displayName: user.displayName
+      firstName: user.displayName?.split(' ')[0] || '',
+      lastName: user.displayName?.split(' ').slice(1).join(' ') || '',
+      createdAt: ''  // or whatever value you have here
     }, 'firebase-auth-token');
 
     registrationSuccess.value = true;

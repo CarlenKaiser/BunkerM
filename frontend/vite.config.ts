@@ -32,8 +32,12 @@ export default defineConfig({
     rollupOptions: {
       // Removed externalizing 'firebase/auth' to avoid build errors
       onwarn(warning, warn) {
-        if (warning.code === 'UNRESOLVED_IMPORT' && warning.source === 'firebase/auth') {
-          // Ignore unresolved import warnings for firebase/auth just in case
+        if (
+          warning.code === 'UNRESOLVED_IMPORT' &&
+          typeof warning === 'object' &&
+          'source' in warning &&
+          (warning as any).source === 'firebase/auth'
+        ) {
           return;
         }
         warn(warning);

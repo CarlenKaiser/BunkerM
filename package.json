@@ -1,6 +1,35 @@
 {
   "dependencies": {
     "firebase": "^12.1.0",
-    "pinia": "^3.0.3"
-  }
+    "pinia": "^3.0.3",
+    "vue": "^3.5.18"
+  },
+  "name": "bunkerm",
+  "version": "1.0.0",
+  "description": "<p align=\"center\">\r   <a href=\"https://bunkeriot.github.io/BunkerM/\">\r     <img\r       src=\"https://img.shields.io/badge/Full%20documentation%20Available-%20Here-green?style=for-the-badge&logo=read-the-docs\"\r       alt=\"Reddit\">\r   </a>\r </p>\r <p align=\"center\">\r   <a href=\"https://www.reddit.com/r/BunkerM/\"><img src=\"https://img.shields.io/badge/Join our-Community-orange?logo=reddit&logoColor=white\" alt=\"Reddit Community\"></a>\r   <a href=\"https://www.linkedin.com/in/mehdi-idrissi/\"><img src=\"https://img.shields.io/badge/Follow me-LinkedIn-blue?logo=linkedin&logoColor=white\" alt=\"LinkedIn Profile\"></a>\r   <a href=\"https://x.com/BunkerIoT\"><img src=\"https://img.shields.io/badge/Follow me-X (Twitter)-black?logo=x&logoColor=white\" alt=\"X (Twitter) Profile\"></a>\r </p>",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "vite": "^7.1.2"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "serve": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CarlenKaiser/BunkerM.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/CarlenKaiser/BunkerM/issues"
+  },
+  "homepage": "https://github.com/CarlenKaiser/BunkerM#readme"
 }

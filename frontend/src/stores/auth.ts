@@ -1,6 +1,5 @@
-// src/stores/auth.ts
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 
 import {
   registerUser,
@@ -8,15 +7,15 @@ import {
   loginWithMicrosoft,
   logoutUser,
   onAuthChange,
-  mapFirebaseUser,
-  User as AuthUser,
 } from '@/services/auth';
+
+import type { User as AuthUser } from '@/services/auth';
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<AuthUser | null>(null);
+  const token = ref<string | null>(null);
   const loading = ref(true);
 
-  // Initialize auth state listener
   async function init() {
     loading.value = true;
     onAuthChange((firebaseUser) => {
@@ -46,15 +45,27 @@ export const useAuthStore = defineStore('auth', () => {
   async function logout() {
     await logoutUser();
     user.value = null;
+    token.value = null;
   }
+
+  // Updated setUser to accept user and token
+  function setUser(newUser: AuthUser | null, authToken?: string) {
+    user.value = newUser;
+    token.value = authToken || null;
+  }
+
+  const isAuthenticated = computed(() => !!user.value && !!token.value);
 
   return {
     user,
+    token,
     loading,
     init,
     register,
     login,
     loginWithMicrosoftSSO,
     logout,
+    setUser,
+    isAuthenticated,
   };
 });
