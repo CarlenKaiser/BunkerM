@@ -1,4 +1,4 @@
-# Use Node.js with Alpine as base
+# Use Node.js with Alpine as base for frontend build
 FROM node:18-alpine as frontend-build
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
@@ -6,20 +6,24 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 # Set working directory for frontend
 WORKDIR /frontend
 
-# Copy frontend files
+# Copy package.json and package-lock.json (if present)
 COPY frontend/package*.json ./
 
-# Install dependencies and TypeScript configurations
-RUN npm install && \
-    npm install -D @vue/tsconfig @tsconfig/node20 @types/node typescript
+# Clear npm cache, install dependencies, and verify firebase installed
+RUN npm cache clean --force && \
+    npm install && \
+    npm list firebase
 
-# Copy frontend source
+# Install dev dependencies needed for TypeScript configs
+RUN npm install -D @vue/tsconfig @tsconfig/node20 @types/node typescript
+
+# Copy full frontend source code
 COPY frontend .
 
-# Build frontend
+# Build the frontend (this should now succeed without unresolved firebase/auth error)
 RUN npm run build
 
-# Create runtime config template
+# Create runtime config template for frontend
 RUN echo 'window.__runtime_config__ = { \
   "API_URL": "RUNTIME_API_URL", \
   "DYNSEC_API_URL": "RUNTIME_DYNSEC_API_URL", \
@@ -35,6 +39,7 @@ RUN echo 'window.__runtime_config__ = { \
     "Content-Type": "application/json" \
   } \
 };' > /frontend/dist/config.js
+
 
 # Use Eclipse Temurin as final base
 FROM eclipse-temurin:17-jdk-alpine
@@ -58,10 +63,10 @@ RUN apk update && apk add --no-cache \
     supervisor \
     ca-certificates \
     nodejs \
-    npm\
-    nginx\
-    openrc\
-    gcc\
+    npm \
+    nginx \
+    openrc \
+    gcc \
     py3-cryptography
 
 # Set up Python virtual environment
@@ -95,9 +100,7 @@ RUN pip install --upgrade pip && \
     python-json-logger \
     aiofiles \
     types-aiofiles \
-    typing-extensions 
-
-
+    typing-extensions
 
 # Install cryptography packages separately to handle dependencies better
 RUN pip install --no-cache-dir \
@@ -105,11 +108,10 @@ RUN pip install --no-cache-dir \
     pyOpenSSL \
     python-jose[cryptography]
 
-
 # Install FastAPI packages that depend on cryptography
 RUN pip install --no-cache-dir \
-fastapi-jwt-auth \
-fastapi-limiter
+    fastapi-jwt-auth \
+    fastapi-limiter
 
 # Configure nginx
 RUN mkdir -p /run/nginx
@@ -157,7 +159,7 @@ RUN echo 'server {' > /etc/nginx/http.d/default.conf && \
 # Create necessary directories
 RUN mkdir -p /app && \
     mkdir -p /var/log/api && \
-    chmod 755 /etc/mosquitto &&\
+    chmod 755 /etc/mosquitto && \
     mkdir -p /etc/mosquitto/conf.d && \
     touch /etc/mosquitto/mosquitto_passwd && \
     chmod 644 /etc/mosquitto/mosquitto_passwd && \
