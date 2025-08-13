@@ -228,9 +228,7 @@ async def verify_firebase_token(credentials: HTTPAuthorizationCredentials = Depe
     try:
         token = credentials.credentials
         decoded_token = auth.verify_id_token(token)
-        custom_claims = decoded_token.get('custom_claims', {})
-        user_role = custom_claims.get('role', 'user')
-        permissions = custom_claims.get('permissions', [])
+        user_role = decoded_token.get('role', 'user')
         
         logger.info(f"Authenticated user: {decoded_token.get('email', 'unknown')}")
         
@@ -239,7 +237,6 @@ async def verify_firebase_token(credentials: HTTPAuthorizationCredentials = Depe
             'email': decoded_token.get('email'),
             'name': decoded_token.get('name'),
             'role': user_role,
-            'permissions': permissions,
             'verified': decoded_token.get('email_verified', False),
             'is_admin': user_role == 'admin',
             'is_moderator': user_role in ['admin', 'moderator'],
@@ -267,7 +264,9 @@ async def require_moderator(user: dict = Depends(verify_firebase_token)) -> dict
     return user
 
 async def require_stats_access(user: dict = Depends(verify_firebase_token)) -> dict:
+    logger.info(f"Checking stats access for user: {user}")
     if not user.get('can_view_stats', False):
+        logger.warning(f"User {user.get('email')} denied stats access. Role: {user.get('role')}")
         raise HTTPException(status_code=403, detail="Insufficient permissions to view statistics")
     return user
 
