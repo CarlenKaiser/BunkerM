@@ -14,7 +14,11 @@ const PORT = process.env.AUTH_API_PORT || 3001;
 
 // Initialize Firebase Admin SDK
 admin.initializeApp({
-  credential: admin.credential.applicationDefault(),
+  credential: admin.credential.cert({
+    projectId: "cpmfgoperations-bunkerm-prod",
+    clientEmail: "firebase-adminsdk-fbsvc@cpmfgoperations-bunkerm-prod.iam.gserviceaccount.com",
+    privateKey: "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCgGUqMMG/f4b+c\nbKAq3qtbDCWbHKTWkVttG+BnfObYL1vgtGjAPCrrt+PrfWt57zV18UZzeYMPl2w6\nw7lS3pywkhzOjXaNkvjcUfc5MPEI7EVZ3GWyyJ1t9OOFqU0c0ik2hghJVxyWfYg3\nnKcaWSnz+BgDU89bldvjTHaRTtp6G/7+EvX24jWqJyC4VoBhF0htsZbg3bYgMbjj\nDElhWHYWv6zDbLo3BFluAo3T9NyDOc8lRbGhfmpp8KDYtq6xDKyvksq8J7UF1IF3\ncDUv9+sZ/nPNiyiQdnXfHonbMgjIYd80o3ZhFALIaD7yCiSELCSmDgW96qTMWG7h\nnwWGIQZBAgMBAAECggEAALJkUWNxpXcl/h1ivKXdhQ/oB7nqv5Ixra903HuepUBG\npRihGLJQrigHDk7xwGHCCyPnO8VNT0h+8E4aln9Me0lpxfIyQY5HMkhCh43mhu3r\nt5WwYRxHMNm7gg+xh7Hm9kfsLteUhXpQA7SpOARtTgiswrUScioZtfEe27nWJNjh\nt7M4tjtP65fapRmCoIRqRHS2I1fOwlv1lQU8eX4zkeKZWmydQM6Sn/u2CBgmaE8X\nr4nBoJLv1u3ZUZHwK94PSl+fLQBroCUST7ZY3fuWtRsIuwqrd1wyLDXvel02p+cp\ns486bO58Bd6dSgn0rCeWBM56sR42XrDoUmp8nms+gQKBgQDX82OxlVxFsngh1k94\nxCsROu0r5bNoAcKKg+ZadmZ5FJ0Dcj41lTfaPyxUAhYg9ziyQY7mxDpmBuR1xmyf\nGCZ04yOVxw2o03EkbRBSz+TtxrgDxJUaXB2RxmdIPwq93EbuAgVfGrvBg1ATI7mr\nSlyKK8QrKG2vBX/FtV0LfnUdwQKBgQC9yj2FRcBD/caJP1MynALGWm2LH490wpdz\nTk+sZ3iRIU0Bf3dvWK/06G6WBQeM8w5Se7WiaXm8T1JWyqf2pxfRnZM0h2C/TKv5\nWh+SNPY6FpHhhEtnTNbXBvR/DeVg0H5yJBez/fibJSPYTLow/EqJnvDCwakwSmZb\nMDvxne8IgQKBgAeq7bRFgGQ9JQTWjjXUiU7wT7GKU2dzAIxYiJpXr+XGtJiFuu2+\nIaCPM6y78jszbADwUPmiqAwtXHlOFVdEzUDDO+U6jyKad176vGSkWxWSQ8Bmf4DT\nGn2tlMc87c21/5K94aDx2w7Q8cvsLdCGMGj7itiZc+OOB25mtSoOUGxBAoGAEUG9\nXEveUpBVqA8Y+oYS/oQkZ70D50L2UGazeeKipNeZT+SOMJKo1ST5QSzN5fQHvlo/\nRrg+eG/h9cBRi2zgDpA8XU9d7acEEBUwv7OPG/MHarEDxi3Hbx/TxWW3EJmElc5Q\nVW5nV3wGCVnYqDGYeXD5RUwknR52th3ppWuN24ECgYEAzv6pZ8w68vAfzdOk0fZ1\nKksqVVpNvvlKKjpRgXdBJnpkRwDEjNN0z8oDQP8H96blBERUlkjd53KI0jddf7qy\nJ6yof4LWrlHdj72kJpxXxxJC6fcVjjEcWlH7wSoUq17TaWnRr38fJ1nkQEy5yOSa\nanJy8fuEakXN5TX30hp2QSM=\n-----END PRIVATE KEY-----\n"
+  })
 });
 
 function log(message) {
@@ -35,19 +39,29 @@ app.use(bodyParser.json());
 // Verify Firebase ID token middleware
 async function verifyFirebaseToken(req, res, next) {
   const authHeader = req.headers.authorization || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+  const token = authHeader.split('Bearer ')[1];
 
   if (!token) {
+    console.log('No token provided');
     return res.status(401).json({ error: 'Unauthorized: No token provided' });
   }
 
   try {
+    console.log('Verifying token:', token.substring(0, 20) + '...');
     const decodedToken = await admin.auth().verifyIdToken(token);
+    console.log('Token decoded successfully for UID:', decodedToken.uid);
     req.firebaseUser = decodedToken;
     next();
   } catch (error) {
-    log(`Firebase token verification error: ${error.message}`);
-    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+    console.error('Token verification failed:', {
+      error: error.message,
+      code: error.code,
+      token: token.substring(0, 20) + '...'
+    });
+    return res.status(401).json({ 
+      error: 'Unauthorized: Invalid token',
+      details: error.message 
+    });
   }
 }
 
