@@ -8,7 +8,7 @@
 # app/monitor/main.py
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import APIKeyHeader
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -31,6 +31,8 @@ from data_storage import HistoricalDataStorage
 import socket
 import uvicorn
 from contextlib import asynccontextmanager
+import firebase_admin
+from firebase_admin import credentials, auth
 
 # Add this for environment variable loading
 try:
@@ -50,6 +52,44 @@ handler = RotatingFileHandler(
 )
 logger.addHandler(handler)
 
+# Firebase Admin SDK initialization
+try:
+    # Option 1: Use service account key file
+    firebase_credentials_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
+    if firebase_credentials_path and os.path.exists(firebase_credentials_path):
+        cred = credentials.Certificate(firebase_credentials_path)
+        firebase_admin.initialize_app(cred)
+        logger.info("Firebase initialized with service account key file")
+    else:
+        # Option 2: Use environment variables for service account
+        firebase_config = {
+            "type": "service_account",
+            "project_id": os.getenv("FIREBASE_PROJECT_ID"),
+            "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
+            "private_key": os.getenv("FIREBASE_PRIVATE_KEY", "").replace('\\n', '\n'),
+            "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
+            "client_id": os.getenv("FIREBASE_CLIENT_ID"),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_CERT_URL")
+        }
+        
+        # Check if all required fields are present
+        required_fields = ["project_id", "private_key", "client_email"]
+        if all(firebase_config.get(field) for field in required_fields):
+            cred = credentials.Certificate(firebase_config)
+            firebase_admin.initialize_app(cred)
+            logger.info("Firebase initialized with environment variables")
+        else:
+            logger.error("Firebase configuration incomplete. Missing required environment variables.")
+            logger.error("Required: FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, FIREBASE_CLIENT_EMAIL")
+            raise ValueError("Firebase configuration incomplete")
+            
+except Exception as e:
+    logger.error(f"Failed to initialize Firebase: {e}")
+    raise
+
 # MQTT Settings - Convert port to integer
 MOSQUITTO_ADMIN_USERNAME = os.getenv("MOSQUITTO_ADMIN_USERNAME")
 MOSQUITTO_ADMIN_PASSWORD = os.getenv("MOSQUITTO_ADMIN_PASSWORD")
@@ -57,16 +97,8 @@ MOSQUITTO_IP = os.getenv("MOSQUITTO_IP", "127.0.0.1")
 # Convert to int with a default value
 MOSQUITTO_PORT = int(os.getenv("MOSQUITTO_PORT", "1900"))
 
-# Security settings
-JWT_SECRET = os.getenv("JWT_SECRET", secrets.token_urlsafe(32))
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION = 30  # minutes
-
-# API Key settings
-API_KEY_NAME = "X-API-Key"
-api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
-API_KEY = os.getenv("API_KEY", "default_api_key_replace_in_production")
-API_KEYS = {API_KEY}
+# Security settings for Firebase
+security = HTTPBearer()
 
 # Define the topics we're interested in
 MONITORED_TOPICS = {
@@ -266,24 +298,86 @@ app.add_middleware(
 # Trusted Host middleware
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
-async def get_api_key(api_key: str = Depends(api_key_header)):
-    """Validate API key"""
-    logger.info(f"Received API Key Header: {api_key}")
-    
-    if not api_key:
-        logger.error("No API key provided")
+async def verify_firebase_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+    """Verify Firebase ID token and return user info with role-based claims"""
+    try:
+        # Extract the token from the Authorization header
+        token = credentials.credentials
+        
+        # Verify the ID token with Firebase Admin SDK
+        decoded_token = auth.verify_id_token(token)
+        
+        # Get custom claims which include role information
+        custom_claims = decoded_token.get('custom_claims', {})
+        
+        # Extract role from custom claims, default to 'user'
+        user_role = custom_claims.get('role', 'user')
+        permissions = custom_claims.get('permissions', [])
+        
+        # Log successful authentication (without sensitive data)
+        logger.info(f"Authenticated user: {decoded_token.get('email', 'unknown')} (UID: {decoded_token.get('uid', 'unknown')}, Role: {user_role})")
+        
+        # Return user info that can be used in your endpoints
+        user_info = {
+            'uid': decoded_token['uid'],
+            'email': decoded_token.get('email'),
+            'name': decoded_token.get('name'),
+            'role': user_role,
+            'permissions': permissions,
+            'verified': decoded_token.get('email_verified', False),
+            'is_admin': user_role == 'admin',
+            'is_moderator': user_role in ['admin', 'moderator'],
+            'can_view_stats': user_role in ['admin', 'moderator', 'viewer']
+        }
+        
+        return user_info
+        
+    except auth.InvalidIdTokenError:
+        logger.error("Invalid Firebase ID token provided")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authentication token"
+        )
+    except auth.ExpiredIdTokenError:
+        logger.error("Expired Firebase ID token provided")
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication token has expired"
+        )
+    except Exception as e:
+        logger.error(f"Authentication error: {str(e)}")
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication failed"
+        )
+
+# Role-based dependency functions
+async def require_admin(user: dict = Depends(verify_firebase_token)) -> dict:
+    """Require admin role"""
+    if not user.get('is_admin', False):
         raise HTTPException(
             status_code=403,
-            detail="No API key provided"
+            detail="Admin access required"
         )
-    
-    if api_key not in API_KEYS:
-        logger.error(f"Invalid API key provided: {api_key}")
+    return user
+
+async def require_moderator(user: dict = Depends(verify_firebase_token)) -> dict:
+    """Require moderator or admin role"""
+    if not user.get('is_moderator', False):
         raise HTTPException(
             status_code=403,
-            detail="Invalid API key"
+            detail="Moderator or admin access required"
         )
-    return api_key
+    return user
+
+async def require_stats_access(user: dict = Depends(verify_firebase_token)) -> dict:
+    """Require permission to view stats"""
+    if not user.get('can_view_stats', False):
+        raise HTTPException(
+            status_code=403,
+            detail="Insufficient permissions to view statistics"
+        )
+    return user
 
 async def log_request(request: Request):
     """Log API request details"""
@@ -303,37 +397,6 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     return response
-
-class NonceManager:
-    def __init__(self):
-        self.used_nonces = set()
-        self._cleanup_thread = threading.Thread(target=self._cleanup_expired_nonces, daemon=True)
-        self._cleanup_thread.start()
-
-    def validate_nonce(self, nonce: str, timestamp: float) -> bool:
-        """Validate nonce and timestamp"""
-        if nonce in self.used_nonces:
-            return False
-        
-        # Check if timestamp is within acceptable range (5 minutes)
-        current_time = datetime.now().timestamp()
-        if current_time - timestamp > 300:  # 5 minutes
-            return False
-            
-        self.used_nonces.add(nonce)
-        return True
-
-    def _cleanup_expired_nonces(self):
-        """Clean up expired nonces periodically"""
-        while True:
-            current_time = datetime.now().timestamp()
-            self.used_nonces = {
-                nonce for nonce in self.used_nonces
-                if current_time - float(nonce.split(':')[0]) <= 300
-            }
-            time.sleep(300)  # Clean up every 5 minutes
-
-nonce_manager = NonceManager()
 
 def on_message(client, userdata, msg):
     """Handle messages from MQTT broker"""
@@ -426,27 +489,18 @@ def connect_mqtt():
         dummy_client.loop_stop = lambda: None
         return dummy_client
 
-# API endpoints
-@app.get("/api/v1/stats", dependencies=[Depends(get_api_key)])
+# API endpoints with role-based access
+@app.get("/api/v1/stats")
+@limiter.limit("30/minute")  # Rate limiting
 async def get_mqtt_stats(
     request: Request,
-    nonce: str,
-    timestamp: float
+    user: dict = Depends(require_stats_access)  # Only users with stats viewing permission
 ):
-    """Get MQTT statistics"""
+    """Get MQTT statistics - requires stats viewing permission"""
     await log_request(request)
-    logger.info(f"Received request with nonce: {nonce}, timestamp: {timestamp}")
+    logger.info(f"Stats requested by user: {user.get('email', 'unknown')} (Role: {user.get('role', 'unknown')})")
     
-    try:
-        if not nonce_manager.validate_nonce(nonce, timestamp):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid nonce or timestamp"
-            )
-        
-        # Add debug logging
-        logger.info("Nonce validation passed")
-        
+    try:        
         try:
             stats = mqtt_stats.get_stats()
             
@@ -454,21 +508,42 @@ async def get_mqtt_stats(
             mqtt_connected = mqtt_stats.connected_clients > 0
             stats["mqtt_connected"] = mqtt_connected
             
-            # If MQTT is not connected, add a message
-            if not mqtt_connected:
-                stats["connection_error"] = f"MQTT broker connection failed. Check if Mosquitto is running on {MOSQUITTO_IP}:{MOSQUITTO_PORT}"
-                logger.warning(f"Serving stats with MQTT disconnected warning: {MOSQUITTO_IP}:{MOSQUITTO_PORT}")
-            else:
-                logger.info("Successfully retrieved stats with active MQTT connection")
+            # Role-based data filtering
+            if user.get('role') == 'viewer':
+                # Viewers get limited data
+                limited_stats = {
+                    "total_connected_clients": stats["total_connected_clients"],
+                    "total_messages_received": stats["total_messages_received"],
+                    "mqtt_connected": stats["mqtt_connected"],
+                    "user": {
+                        "email": user.get('email'),
+                        "role": user.get('role')
+                    }
+                }
+                stats = limited_stats
+            elif user.get('is_moderator'):
+                # Moderators and admins get full data
+                if not mqtt_connected:
+                    stats["connection_error"] = f"MQTT broker connection failed. Check if Mosquitto is running on {MOSQUITTO_IP}:{MOSQUITTO_PORT}"
+                    logger.warning(f"Serving stats with MQTT disconnected warning: {MOSQUITTO_IP}:{MOSQUITTO_PORT}")
+                else:
+                    logger.info("Successfully retrieved stats with active MQTT connection")
+                    
+                # Add user info to response
+                stats["user"] = {
+                    "email": user.get('email'),
+                    "uid": user.get('uid'),
+                    "role": user.get('role')
+                }
+            
         except Exception as stats_error:
             logger.error(f"Error in mqtt_stats.get_stats(): {str(stats_error)}")
-            logger.exception(stats_error)  # This will log the full traceback
+            logger.exception(stats_error)
             
             # Return partial stats with error flag
             stats = {
                 "mqtt_connected": False,
                 "connection_error": f"Error getting MQTT stats: {str(stats_error)}",
-                # Default values for essential fields
                 "total_connected_clients": 0,
                 "total_messages_received": "0",
                 "total_subscriptions": 0,
@@ -483,12 +558,17 @@ async def get_mqtt_stats(
                 "daily_message_stats": {
                     "dates": [],
                     "counts": []
+                },
+                "user": {
+                    "email": user.get('email'),
+                    "uid": user.get('uid'),
+                    "role": user.get('role')
                 }
             }
         
         response = JSONResponse(content=stats)
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, DELETE, PUT"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-API-Key"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         response.headers["Access-Control-Allow-Origin"] = os.getenv("FRONTEND_URL", "http://localhost:2000")
         response.headers["Access-Control-Allow-Credentials"] = "true"
         return response
@@ -497,13 +577,124 @@ async def get_mqtt_stats(
         raise he
     except Exception as e:
         logger.error(f"Unexpected error in get_stats endpoint: {str(e)}")
-        logger.exception(e)  # This will log the full traceback
+        logger.exception(e)
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error: {str(e)}"
         )
+
+# Admin-only endpoints
+@app.post("/api/v1/admin/users/{uid}/role")
+async def set_user_role(
+    uid: str,
+    role_data: dict,
+    admin_user: dict = Depends(require_admin)
+):
+    """Set custom claims for a user (Admin only)"""
+    try:
+        new_role = role_data.get('role', 'user')
+        permissions = role_data.get('permissions', [])
         
+        # Validate role
+        valid_roles = ['user', 'viewer', 'moderator', 'admin']
+        if new_role not in valid_roles:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid role. Must be one of: {valid_roles}"
+            )
         
+        # Set custom claims
+        custom_claims = {
+            'role': new_role,
+            'permissions': permissions,
+            'updated_by': admin_user.get('email'),
+            'updated_at': datetime.now().isoformat()
+        }
+        
+        auth.set_custom_user_claims(uid, custom_claims)
+        
+        logger.info(f"Admin {admin_user.get('email')} set role '{new_role}' for user {uid}")
+        
+        return {
+            "success": True,
+            "message": f"Role updated to '{new_role}' for user {uid}",
+            "updated_by": admin_user.get('email')
+        }
+        
+    except auth.UserNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+    except Exception as e:
+        logger.error(f"Error setting user role: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update user role"
+        )
+
+@app.get("/api/v1/admin/users")
+async def list_users(
+    admin_user: dict = Depends(require_admin),
+    limit: int = 100
+):
+    """List all users (Admin only)"""
+    try:
+        users = []
+        page = auth.list_users(max_results=limit)
+        
+        for user in page.users:
+            users.append({
+                'uid': user.uid,
+                'email': user.email,
+                'display_name': user.display_name,
+                'email_verified': user.email_verified,
+                'disabled': user.disabled,
+                'custom_claims': user.custom_claims or {},
+                'role': (user.custom_claims or {}).get('role', 'user'),
+                'created_at': user.user_metadata.creation_timestamp.isoformat() if user.user_metadata.creation_timestamp else None
+            })
+        
+        return {
+            "users": users,
+            "total_count": len(users)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listing users: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to list users"
+        )
+
+# Moderator endpoints
+@app.get("/api/v1/moderator/system-status")
+async def get_system_status(
+    moderator_user: dict = Depends(require_moderator)
+):
+    """Get system status information (Moderator+ only)"""
+    try:
+        return {
+            "mqtt_broker": {
+                "host": MOSQUITTO_IP,
+                "port": MOSQUITTO_PORT,
+                "connected": mqtt_stats.connected_clients > 0
+            },
+            "api_status": "running",
+            "user_count": len(list(auth.list_users(max_results=1000).users)),
+            "requested_by": {
+                "email": moderator_user.get('email'),
+                "role": moderator_user.get('role')
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting system status: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to get system status"
+        )
+
+# Keep test endpoints without authentication for debugging
 @app.get("/api/v1/test/mqtt-stats")
 async def test_mqtt_stats():
     """Test endpoint to verify MQTT stats functionality"""
