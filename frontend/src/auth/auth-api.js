@@ -44,6 +44,19 @@ async function verifyFirebaseToken(req, res, next) {
   try {
     const decodedToken = await admin.auth().verifyIdToken(token);
     req.firebaseUser = decodedToken;
+
+    // Check if any admin exists in the system
+    const listResult = await admin.auth().listUsers(1); // Just check 1 user for efficiency
+    const hasAdmin = listResult.users.some(user => 
+      user.customClaims?.role === 'admin'
+    );
+
+    // If no admin exists, make this user an admin
+    if (!hasAdmin) {
+      await admin.auth().setCustomUserClaims(decodedToken.uid, { role: 'admin' });
+      log(`Auto-promoted first user (${decodedToken.email}) to admin`);
+    }
+
     next();
   } catch (error) {
     log(`Firebase token verification error: ${error.message}`);
