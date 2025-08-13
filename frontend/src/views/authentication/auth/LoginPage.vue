@@ -2,6 +2,7 @@
 import Logo from '@/layouts/dashboard/logo/LogoDark.vue';
 import AuthLogin from '../authForms/AuthLogin.vue';
 import AuthFooter from './AuthFooter.vue';
+import DebugAuth from '@/components/shared/DebugAuth.vue';
 </script>
 
 <template>
@@ -44,6 +45,17 @@ import AuthFooter from './AuthFooter.vue';
                 </v-card>
               </v-card>
             </v-col>
+            
+            <!-- Debug Component - Add this section -->
+            <v-col cols="12" md="12" class="mt-4">
+              <v-card elevation="0" class="debugBox">
+                <v-card elevation="4">
+                  <v-card-text class="pa-4">
+                    <DebugAuth />
+                  </v-card-text>
+                </v-card>
+              </v-card>
+            </v-col>
           </v-row>
         </div>
       </v-container>
@@ -62,6 +74,12 @@ import AuthFooter from './AuthFooter.vue';
   max-width: 475px;
   margin: 0 auto;
 }
+
+.debugBox {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
 .blur-logo {
   position: absolute;
   filter: blur(18px);
