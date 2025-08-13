@@ -7,7 +7,7 @@ const runtimeConfig = getRuntimeConfig();
 
 const firebaseConfig = {
   apiKey: "AIzaSyCdVR8DrCSdn0ihh-krJwTA0bBJXYN6UVQ",
-  authDomain: "cpmfgoperations-bunkerm-prod.firebaseapp.com",
+  authDomain: "auth.bunkerm.cpmfgoperations.com",
   projectId: "cpmfgoperations-bunkerm-prod",
   storageBucket: "cpmfgoperations-bunkerm-prod.appspot.com",
   messagingSenderId: "37053050602",
