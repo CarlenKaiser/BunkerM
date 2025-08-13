@@ -77,7 +77,7 @@ const fetchStats = async () => {
     }
 
     const response = await fetch(
-      `${API_BASE_URL}/api/v1/stats?nonce=${nonce}&timestamp=${timestamp}`,
+      `${API_BASE_URL}/stats?nonce=${nonce}&timestamp=${timestamp}`,
       {
         method: 'GET',
         headers,

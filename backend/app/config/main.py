@@ -4,39 +4,50 @@
 # You may not use this file except in compliance with the License.
 # http://www.apache.org/licenses/LICENSE-2.0
 # Distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
-#
-# backend/app/config/main.py
+
 import logging
 import os
-import ssl
-from fastapi import FastAPI, HTTPException, Security, Depends, Request, status
-from fastapi.security.api_key import APIKeyHeader
+from fastapi import FastAPI, HTTPException, Depends, Request, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from dotenv import load_dotenv
 from datetime import datetime
 import uvicorn
+import firebase_admin
+from firebase_admin import credentials, auth
 
-# Import the mosquitto_config router
+# Import routers
 from mosquitto_config import router as mosquitto_config_router
 from dynsec_config import router as dynsec_config_router
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 handler = logging.handlers.RotatingFileHandler(
-    "config_api_activity.log", maxBytes=10000000, backupCount=5  # 10MB
+    "config_api_activity.log", 
+    maxBytes=10000000,  # 10MB
+    backupCount=5
 )
 logger.addHandler(handler)
 
 # Environment variables
-API_KEY = os.getenv("API_KEY")
 ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost").split(",")
+FIREBASE_CREDENTIALS_PATH = os.getenv("FIREBASE_CREDENTIALS_PATH")
 
-# Initialize FastAPI app with versioning
+# Initialize Firebase Admin SDK
+try:
+    cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
+    firebase_admin.initialize_app(cred)
+    logger.info("Firebase Admin SDK initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize Firebase: {e}")
+    raise
+
+# Initialize FastAPI app
 app = FastAPI(
     title="Mosquitto Management API",
     version="1.0.0",
@@ -44,41 +55,98 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# CORS middleware
+# Security scheme
+security = HTTPBearer()
+
+# Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Trusted Host middleware
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
+# Include routers with Firebase auth
+app.include_router(
+    mosquitto_config_router,
+    prefix="/api/v1",
+    dependencies=[Depends(verify_firebase_token)]
+)
 
-# API Key security
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+app.include_router(
+    dynsec_config_router,
+    prefix="/api/v1",
+    dependencies=[Depends(verify_firebase_token)]
+)
 
-# Include the mosquitto_config router
-app.include_router(mosquitto_config_router, prefix="/api/v1")
-app.include_router(dynsec_config_router, prefix="/api/v1")
-
-async def get_api_key(api_key_header: str = Security(api_key_header)):
-    if api_key_header != API_KEY:
-        logger.warning(f"Invalid API key attempt")
+async def verify_firebase_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> dict:
+    """Verify Firebase ID token and return user info"""
+    try:
+        token = credentials.credentials
+        decoded_token = auth.verify_id_token(token)
+        
+        # Get custom claims (roles/permissions)
+        custom_claims = decoded_token.get('custom_claims', {})
+        user_role = custom_claims.get('role', 'user')
+        
+        logger.info(f"Authenticated user: {decoded_token.get('email', 'unknown')}")
+        
+        return {
+            'uid': decoded_token['uid'],
+            'email': decoded_token.get('email'),
+            'role': user_role,
+            'is_admin': user_role == 'admin',
+            'is_moderator': user_role in ['admin', 'moderator']
+        }
+        
+    except auth.InvalidIdTokenError:
+        logger.warning("Invalid Firebase ID token provided")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API Key"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token"
         )
-    return api_key_header
+    except auth.ExpiredIdTokenError:
+        logger.warning("Expired Firebase ID token provided")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication token has expired"
+        )
+    except Exception as e:
+        logger.error(f"Authentication error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication failed"
+        )
+
+async def require_admin(user: dict = Depends(verify_firebase_token)) -> dict:
+    """Require admin role"""
+    if not user.get('is_admin', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    return user
+
+async def require_moderator(user: dict = Depends(verify_firebase_token)) -> dict:
+    """Require moderator or admin role"""
+    if not user.get('is_moderator', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Moderator or admin access required"
+        )
+    return user
 
 async def log_request(request: Request):
     """Log API request details"""
     logger.info(
         f"Request: {request.method} {request.url} "
         f"Client: {request.client.host} "
-        f"User-Agent: {request.headers.get('user-agent')} "
-        f"Time: {datetime.now().isoformat()}"
+        f"User-Agent: {request.headers.get('user-agent')}"
     )
 
 @app.middleware("http")
@@ -89,7 +157,6 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     return response
 
-# Add a health check endpoint
 @app.get("/api/v1/health")
 async def health_check(request: Request):
     """Health check endpoint"""
@@ -102,9 +169,6 @@ async def health_check(request: Request):
     }
 
 if __name__ == "__main__":
-    # Use port 1005 since 1000-1004 are already in use
     PORT = int(os.getenv("CONFIG_API_PORT", "1005"))
-    
-    # Run the application
     logger.info(f"Starting Config API on port {PORT}")
     uvicorn.run(app, host="0.0.0.0", port=PORT)

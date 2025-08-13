@@ -4,8 +4,7 @@
 # You may not use this file except in compliance with the License.
 # http://www.apache.org/licenses/LICENSE-2.0
 # Distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
-#
-# backend/app/config/mosquitto_config.py
+
 from logging.handlers import RotatingFileHandler
 import logging
 import os
@@ -14,36 +13,76 @@ import shutil
 import subprocess
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, HTTPException, Depends, Security, status
-from fastapi.security.api_key import APIKeyHeader
+from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 # Router setup
-router = APIRouter(tags=["mosquitto_config"])
+router = APIRouter(
+    tags=["mosquitto_config"],
+    dependencies=[Depends(verify_firebase_token)]  # Default auth for all routes
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 # Environment variables
-API_KEY = os.getenv("API_KEY")
 MOSQUITTO_CONF_PATH = os.getenv("MOSQUITTO_CONF_PATH", "/etc/mosquitto/mosquitto.conf")
 BACKUP_DIR = os.getenv("MOSQUITTO_BACKUP_DIR", "/tmp/mosquitto_backups")
 
 # Security
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+security = HTTPBearer()
 
 # Create backup directory if it doesn't exist
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
-
-async def get_api_key(api_key_header: str = Security(api_key_header)):
-    if api_key_header != API_KEY:
-        logger.warning(f"Invalid API key attempt")
+async def verify_firebase_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> dict:
+    """Verify Firebase ID token and return user info with role"""
+    try:
+        token = credentials.credentials
+        decoded_token = auth.verify_id_token(token)
+        custom_claims = decoded_token.get('custom_claims', {})
+        user_role = custom_claims.get('role', 'user')
+        
+        logger.info(f"Authenticated user: {decoded_token.get('email', 'unknown')}")
+        
+        return {
+            'uid': decoded_token['uid'],
+            'email': decoded_token.get('email'),
+            'role': user_role,
+            'is_admin': user_role == 'admin',
+            'is_moderator': user_role in ['admin', 'moderator']
+        }
+        
+    except auth.InvalidIdTokenError:
+        logger.error("Invalid Firebase ID token provided")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API Key"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token"
         )
-    return api_key_header
+    except auth.ExpiredIdTokenError:
+        logger.error("Expired Firebase ID token provided")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication token has expired"
+        )
+    except Exception as e:
+        logger.error(f"Authentication error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication failed"
+        )
 
+async def require_admin(user: dict = Depends(verify_firebase_token)) -> dict:
+    """Require admin role for sensitive operations"""
+    if not user.get('is_admin', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    return user
 
 # Models for request validation
 class Listener(BaseModel):
@@ -52,13 +91,11 @@ class Listener(BaseModel):
     per_listener_settings: Optional[bool] = False
     max_connections: Optional[int] = -1
 
-
 class MosquittoConfig(BaseModel):
     config: Dict[str, Any]
     listeners: List[Listener] = []
 
-
-# Default configuration based on the provided mosquitto.conf
+# Default configuration
 DEFAULT_CONFIG = """# MQTT listener on port 1900
 listener 1900
 per_listener_settings false
@@ -78,11 +115,8 @@ persistence_location /var/lib/mosquitto/
 persistence_file mosquitto.db
 """
 
-
 def parse_mosquitto_conf() -> Dict[str, Any]:
-    """
-    Parse the mosquitto.conf file into a dictionary
-    """
+    """Parse the mosquitto.conf file into a dictionary"""
     config = {}
     listeners = []
     current_listener = None
@@ -93,18 +127,13 @@ def parse_mosquitto_conf() -> Dict[str, Any]:
 
         for line in lines:
             line = line.strip()
-
-            # Skip comments and empty lines
             if not line or line.startswith("#"):
                 continue
 
-            # Check if this is a listener line
             if line.startswith("listener "):
                 parts = line.split()
-
                 if current_listener:
                     listeners.append(current_listener)
-
                 current_listener = {
                     "port": int(parts[1]),
                     "bind_address": parts[2] if len(parts) > 2 else "",
@@ -120,12 +149,10 @@ def parse_mosquitto_conf() -> Dict[str, Any]:
                 elif key == "max_connections":
                     current_listener[key] = int(value)
             else:
-                # Regular configuration line
                 if " " in line:
                     key, value = line.split(" ", 1)
                     config[key] = value
 
-        # Add the last listener if there is one
         if current_listener:
             listeners.append(current_listener)
 
@@ -135,69 +162,52 @@ def parse_mosquitto_conf() -> Dict[str, Any]:
         logger.error(f"Error parsing mosquitto.conf: {str(e)}")
         return {"config": {}, "listeners": []}
 
-
 def generate_mosquitto_conf(
     config_data: Dict[str, Any], listeners: List[Dict[str, Any]]
 ) -> str:
-    """
-    Generate mosquitto.conf content from configuration data
-    """
-    lines = []
+    """Generate mosquitto.conf content from configuration data"""
+    lines = [
+        "# Mosquitto Broker Configuration",
+        "# Generated on " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ""
+    ]
 
-    # Add a header
-    lines.append("# Mosquitto Broker Configuration")
-    lines.append("# Generated on " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    lines.append("")
-
-    # Add main configuration
+    # Main configuration
     for key, value in config_data.items():
-        # Skip some keys that are handled separately
         if key in ["plugin", "plugin_opt_config_file"]:
             continue
-
-        # Convert Python booleans to lowercase strings for mosquitto config
         if isinstance(value, bool):
             value = str(value).lower()
-
         lines.append(f"{key} {value}")
 
-    # Add plugins configuration
+    # Plugins configuration
     if "plugin" in config_data:
-        lines.append("")
-        lines.append("# Dynamic Security Plugin configuration")
-        lines.append(f"plugin {config_data['plugin']}")
-
+        lines.extend([
+            "",
+            "# Dynamic Security Plugin configuration",
+            f"plugin {config_data['plugin']}"
+        ])
         if "plugin_opt_config_file" in config_data:
-            lines.append(
-                f"plugin_opt_config_file {config_data['plugin_opt_config_file']}"
-            )
+            lines.append(f"plugin_opt_config_file {config_data['plugin_opt_config_file']}")
 
-    # Add listeners
+    # Listeners
     for listener in listeners:
-        lines.append("")
-        lines.append(
+        lines.extend([
+            "",
             f"listener {listener['port']}{' ' + listener['bind_address'] if listener['bind_address'] else ''}"
-        )
-
-        if "per_listener_settings" in listener and listener["per_listener_settings"]:
-            lines.append(f"per_listener_settings true")
-        elif "per_listener_settings" in listener:
-            lines.append(f"per_listener_settings false")
-
+        ])
+        if "per_listener_settings" in listener:
+            lines.append(f"per_listener_settings {str(listener['per_listener_settings']).lower()}")
         if "max_connections" in listener and listener["max_connections"] != -1:
             lines.append(f"max_connections {listener['max_connections']}")
 
     return "\n".join(lines)
 
-
 @router.get("/mosquitto-config")
-async def get_mosquitto_config(api_key: str = Security(get_api_key)):
-    """
-    Get the current Mosquitto configuration
-    """
+async def get_mosquitto_config(user: dict = Depends(verify_firebase_token)):
+    """Get the current Mosquitto configuration"""
     try:
         config_data = parse_mosquitto_conf()
-
         if not config_data["config"]:
             return {
                 "success": False,
@@ -217,26 +227,21 @@ async def get_mosquitto_config(api_key: str = Security(get_api_key)):
             detail=f"Failed to get Mosquitto configuration: {str(e)}",
         )
 
-
 @router.post("/mosquitto-config")
 async def save_mosquitto_config(
-    config: MosquittoConfig, api_key: str = Security(get_api_key)
+    config: MosquittoConfig, 
+    user: dict = Depends(require_admin)  # Only admins can modify config
 ):
-
     try:
-        # Convert listeners to the format expected by generate_mosquitto_conf
         listeners_list = []
         for listener in config.listeners:
-            listeners_list.append(
-                {
-                    "port": listener.port,
-                    "bind_address": listener.bind_address or "",
-                    "per_listener_settings": listener.per_listener_settings,
-                    "max_connections": listener.max_connections,
-                }
-            )
+            listeners_list.append({
+                "port": listener.port,
+                "bind_address": listener.bind_address or "",
+                "per_listener_settings": listener.per_listener_settings,
+                "max_connections": listener.max_connections,
+            })
 
-        # Validate listeners for duplicate ports
         current_config = parse_mosquitto_conf()
         is_valid, error_message = validate_listeners(current_config.get("listeners", []), listeners_list)
         
@@ -247,25 +252,20 @@ async def save_mosquitto_config(
                 "message": error_message
             }
 
-        # Create backup of current configuration
+        # Create backup
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = os.path.join(BACKUP_DIR, f"mosquitto.conf.bak.{timestamp}")
-
         if os.path.exists(MOSQUITTO_CONF_PATH):
             shutil.copy2(MOSQUITTO_CONF_PATH, backup_path)
-            logger.info(f"Created backup of Mosquitto configuration at {backup_path}")
+            logger.info(f"Created backup at {backup_path}")
 
-        # Generate new configuration content
+        # Write new config
         new_config_content = generate_mosquitto_conf(config.config, listeners_list)
-
-        # Write new configuration
         with open(MOSQUITTO_CONF_PATH, "w") as f:
             f.write(new_config_content)
-
-        # Set proper permissions
         os.chmod(MOSQUITTO_CONF_PATH, 0o644)
 
-        logger.info(f"Mosquitto configuration saved successfully")
+        logger.info("Configuration saved successfully")
         return {
             "success": True,
             "message": "Mosquitto configuration saved successfully",
@@ -273,71 +273,58 @@ async def save_mosquitto_config(
         }
 
     except Exception as e:
-        logger.error(f"Error saving Mosquitto configuration: {str(e)}")
+        logger.error(f"Error saving configuration: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save Mosquitto configuration: {str(e)}",
+            detail=f"Failed to save configuration: {str(e)}",
         )
-        
 
 @router.post("/reset-mosquitto-config")
-async def reset_mosquitto_config(api_key: str = Security(get_api_key)):
-    """
-    Reset Mosquitto configuration to default
-    """
+async def reset_mosquitto_config(user: dict = Depends(require_admin)):
+    """Reset to default configuration (Admin only)"""
     try:
-        # Create backup of current configuration
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = os.path.join(BACKUP_DIR, f"mosquitto.conf.bak.{timestamp}")
 
         if os.path.exists(MOSQUITTO_CONF_PATH):
             shutil.copy2(MOSQUITTO_CONF_PATH, backup_path)
-            logger.info(f"Created backup of Mosquitto configuration at {backup_path}")
+            logger.info(f"Created backup at {backup_path}")
 
-        # Write default configuration
         with open(MOSQUITTO_CONF_PATH, "w") as f:
             f.write(DEFAULT_CONFIG)
-
-        # Set proper permissions
         os.chmod(MOSQUITTO_CONF_PATH, 0o644)
 
-        logger.info(f"Mosquitto configuration reset to default")
+        logger.info("Configuration reset to default")
         return {
             "success": True,
-            "message": "Mosquitto configuration reset to default",
+            "message": "Configuration reset to default",
             "need_restart": True,
         }
 
     except Exception as e:
-        logger.error(f"Error resetting Mosquitto configuration: {str(e)}")
+        logger.error(f"Error resetting configuration: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to reset Mosquitto configuration: {str(e)}",
+            detail=f"Failed to reset configuration: {str(e)}",
         )
-
 
 @router.post("/remove-mosquitto-listener")
 async def remove_mosquitto_listener(
-    listener_data: dict, api_key: str = Security(get_api_key)
+    listener_data: dict, 
+    user: dict = Depends(require_admin)
 ):
-    """
-    Remove a specific listener from the Mosquitto configuration
-    """
+    """Remove a listener (Admin only)"""
     try:
-        # Extract listener port from request data
         port = listener_data.get("port")
         if not port:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Listener port is required",
+                detail="Port is required",
             )
 
-        # Read current configuration
         config_data = parse_mosquitto_conf()
-        config_dict = config_data["config"]
         listeners_list = config_data["listeners"]
         
-        # Find and remove the listener with the specified port
         found = False
         for i, listener in enumerate(listeners_list):
             if listener.get("port") == port:
@@ -348,50 +335,37 @@ async def remove_mosquitto_listener(
         if not found:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Listener with port {port} not found in configuration",
+                detail=f"Listener on port {port} not found",
             )
         
-        # Create backup of current configuration
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = os.path.join(BACKUP_DIR, f"mosquitto.conf.bak.{timestamp}")
-
         if os.path.exists(MOSQUITTO_CONF_PATH):
             shutil.copy2(MOSQUITTO_CONF_PATH, backup_path)
-            logger.info(f"Created backup of Mosquitto configuration at {backup_path}")
 
-        # Generate new configuration content
-        new_config_content = generate_mosquitto_conf(config_dict, listeners_list)
-
-        # Write new configuration
+        new_config_content = generate_mosquitto_conf(config_data["config"], listeners_list)
         with open(MOSQUITTO_CONF_PATH, "w") as f:
             f.write(new_config_content)
-
-        # Set proper permissions
         os.chmod(MOSQUITTO_CONF_PATH, 0o644)
 
-        logger.info(f"Listener on port {port} removed from Mosquitto configuration")
+        logger.info(f"Removed listener on port {port}")
         return {
             "success": True,
-            "message": f"Listener on port {port} removed from Mosquitto configuration",
+            "message": f"Removed listener on port {port}",
             "need_restart": True,
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error removing listener from Mosquitto configuration: {str(e)}")
+        logger.error(f"Error removing listener: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to remove listener from Mosquitto configuration: {str(e)}",
+            detail=f"Failed to remove listener: {str(e)}",
         )
-        
-        
+
 def validate_listeners(current_listeners: List[Dict[str, Any]], new_listeners: List[Dict[str, Any]]) -> tuple[bool, str]:
-    """
-    Validate that there are no duplicate listener ports
-    Returns (is_valid, error_message)
-    """
-    # Get all port numbers from the new listeners
+    """Validate listener ports"""
     port_counts = {}
     for listener in new_listeners:
         port = listener.get('port')
@@ -400,16 +374,13 @@ def validate_listeners(current_listeners: List[Dict[str, Any]], new_listeners: L
         else:
             port_counts[port] = 1
     
-    # Check for duplicates within the new configuration
     for port, count in port_counts.items():
         if count > 1:
-            return False, f"Duplicate listener port {port} found in configuration"
+            return False, f"Duplicate port {port}"
     
-    # Also check for duplicate listener ports in the default configuration that aren't being updated
-    default_ports = [1900, 8080]  # From the DEFAULT_CONFIG
-    
+    default_ports = [1900, 8080]
     for port in port_counts:
         if port in default_ports and any(l.get('port') != port for l in new_listeners):
-            return False, f"Port {port} is already used by Mosquitto's default configuration"
+            return False, f"Port {port} is reserved"
     
     return True, ""
