@@ -4,31 +4,34 @@
 # You may not use this file except in compliance with the License.
 # http://www.apache.org/licenses/LICENSE-2.0
 # Distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
-#
-# backend/app/config/dynsec_config.py
+
 import json
 import logging
 import os
 import shutil
 from datetime import datetime
 from typing import Dict, Any, List
-from fastapi import APIRouter, HTTPException, Depends, Security, UploadFile, File, status, Response
-from fastapi.security.api_key import APIKeyHeader
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, status, Response
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
+import firebase_admin
+from firebase_admin import auth
 
-# Router setup
-router = APIRouter(tags=["dynsec_config"])
+# Router setup with default Firebase auth
+router = APIRouter(
+    tags=["dynsec_config"],
+    dependencies=[Depends(verify_firebase_token)]  # Default auth for all routes
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 # Environment variables
-API_KEY = os.getenv("API_KEY")
 DYNSEC_JSON_PATH = os.getenv("DYNSEC_JSON_PATH", "/var/lib/mosquitto/dynamic-security.json")
 BACKUP_DIR = os.getenv("DYNSEC_BACKUP_DIR", "/tmp/dynsec_backups")
 
 # Security
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+security = HTTPBearer()
 
 # Create backup directory if it doesn't exist
 os.makedirs(BACKUP_DIR, exist_ok=True)
@@ -98,20 +101,56 @@ DEFAULT_CONFIG = {
     }]
 }
 
-
-async def get_api_key(api_key_header: str = Security(api_key_header)):
-    if api_key_header != API_KEY:
-        logger.warning(f"Invalid API key attempt")
+async def verify_firebase_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> dict:
+    """Verify Firebase ID token and return user info"""
+    try:
+        token = credentials.credentials
+        decoded_token = auth.verify_id_token(token)
+        custom_claims = decoded_token.get('custom_claims', {})
+        user_role = custom_claims.get('role', 'user')
+        
+        logger.info(f"Authenticated user: {decoded_token.get('email', 'unknown')}")
+        
+        return {
+            'uid': decoded_token['uid'],
+            'email': decoded_token.get('email'),
+            'role': user_role,
+            'is_admin': user_role == 'admin',
+            'is_moderator': user_role in ['admin', 'moderator']
+        }
+        
+    except auth.InvalidIdTokenError:
+        logger.error("Invalid Firebase ID token provided")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API Key"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token"
         )
-    return api_key_header
+    except auth.ExpiredIdTokenError:
+        logger.error("Expired Firebase ID token provided")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication token has expired"
+        )
+    except Exception as e:
+        logger.error(f"Authentication error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication failed"
+        )
 
+async def require_admin(user: dict = Depends(verify_firebase_token)) -> dict:
+    """Require admin role for sensitive operations"""
+    if not user.get('is_admin', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    return user
 
 def read_dynsec_json() -> Dict[str, Any]:
-    """
-    Read the dynamic security JSON file
-    """
+    """Read the dynamic security JSON file"""
     try:
         with open(DYNSEC_JSON_PATH, "r") as f:
             return json.load(f)
@@ -119,11 +158,8 @@ def read_dynsec_json() -> Dict[str, Any]:
         logger.error(f"Error reading dynamic security JSON: {str(e)}")
         return {}
 
-
 def write_dynsec_json(data: Dict[str, Any]) -> bool:
-    """
-    Write to the dynamic security JSON file
-    """
+    """Write to the dynamic security JSON file"""
     try:
         with open(DYNSEC_JSON_PATH, "w") as f:
             json.dump(data, f, indent=4)
@@ -133,23 +169,18 @@ def write_dynsec_json(data: Dict[str, Any]) -> bool:
         return False
 
 def validate_dynsec_json(data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Validate the dynamic security JSON structure
-    """
+    """Validate the dynamic security JSON structure"""
     required_keys = ["defaultACLAccess", "clients", "groups", "roles"]
     
-    # Check if all required keys exist
     for key in required_keys:
         if key not in data:
             raise ValueError(f"Missing required key: {key}")
     
-    # Ensure "defaultACLAccess" has required fields
     required_acl_fields = ["publishClientSend", "publishClientReceive", "subscribe", "unsubscribe"]
     for field in required_acl_fields:
         if field not in data["defaultACLAccess"]:
             raise ValueError(f"Missing required field in defaultACLAccess: {field}")
     
-    # Validate that "clients", "groups", and "roles" are lists
     if not isinstance(data["clients"], list):
         raise ValueError("'clients' must be a list")
     if not isinstance(data["groups"], list):
@@ -157,81 +188,51 @@ def validate_dynsec_json(data: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(data["roles"], list):
         raise ValueError("'roles' must be a list")
     
-    # For files exported by our system, we don't require admin user and role to be present
-    # They will be added back during the merge process
-    
     return data
 
 def merge_dynsec_configs(imported_config: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Merge imported config with default config to preserve critical components
-    """
-    # Start with a deep copy of the default config
+    """Merge imported config with default config to preserve critical components"""
     merged_config = DEFAULT_CONFIG.copy()
     
-    # Copy defaultACLAccess from default config (must be preserved)
-    # merged_config["defaultACLAccess"] = DEFAULT_CONFIG["defaultACLAccess"]
-    
-    # Keep admin user and add other users from imported config
     admin_user = DEFAULT_CONFIG["clients"][0]
-    
-    # Get all non-admin users from imported config
     non_admin_users = [user for user in imported_config.get("clients", []) 
-                       if "username" in user and user["username"] != "bunker"]
-    
-    # Combine admin user with non-admin users
+                     if "username" in user and user["username"] != "bunker"]
     merged_config["clients"] = [admin_user] + non_admin_users
     
-    # Keep admin role and add other roles from imported config
     admin_role = DEFAULT_CONFIG["roles"][0]
-    
-    # Get all non-admin roles from imported config
     non_admin_roles = [role for role in imported_config.get("roles", []) 
-                       if "rolename" in role and role["rolename"] != "admin"]
-    
-    # Combine admin role with non-admin roles
+                     if "rolename" in role and role["rolename"] != "admin"]
     merged_config["roles"] = [admin_role] + non_admin_roles
     
-    # Import groups from imported config
     merged_config["groups"] = imported_config.get("groups", [])
     
     return merged_config
 
-
 def create_backup() -> str:
-    """
-    Create a backup of the current dynamic security JSON file
-    """
+    """Create a backup of the current dynamic security JSON file"""
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = os.path.join(BACKUP_DIR, f"dynamic-security.json.bak.{timestamp}")
         
         if os.path.exists(DYNSEC_JSON_PATH):
             shutil.copy2(DYNSEC_JSON_PATH, backup_path)
-            logger.info(f"Created backup of dynamic security JSON at {backup_path}")
+            logger.info(f"Created backup at {backup_path}")
             return backup_path
-        else:
-            logger.warning(f"Dynamic security JSON file not found at {DYNSEC_JSON_PATH}")
-            return ""
+        return ""
     except Exception as e:
         logger.error(f"Error creating backup: {str(e)}")
         return ""
 
-
 @router.get("/dynsec-json")
-async def get_dynsec_json(api_key: str = Security(get_api_key)):
-    """
-    Get the current dynamic security JSON configuration
-    """
+async def get_dynsec_json(user: dict = Depends(verify_firebase_token)):
+    """Get the current dynamic security JSON configuration"""
     try:
         data = read_dynsec_json()
-        
         if not data:
             return {
                 "success": False,
                 "message": "Failed to read dynamic security JSON"
             }
-        
         return {
             "success": True,
             "data": data
@@ -243,48 +244,33 @@ async def get_dynsec_json(api_key: str = Security(get_api_key)):
             detail=f"Failed to get dynamic security JSON: {str(e)}"
         )
 
-
 @router.get("/export-dynsec-json")
-async def export_dynsec_json(api_key: str = Security(get_api_key)):
-    """
-    Export the dynamic security JSON file for download, excluding default admin user and role
-    """
+async def export_dynsec_json(user: dict = Depends(require_admin)):  # Admin only
+    """Export the dynamic security JSON file for download"""
     try:
-        logger.info("Export request received")
         data = read_dynsec_json()
-        
         if not data:
-            logger.error("Failed to read dynamic security JSON file")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to read dynamic security JSON"
             )
         
-        # Create a copy of the data for modification
         export_data = data.copy()
-        
-        # Remove the default "bunker" admin user from the exported data
         if "clients" in export_data:
             export_data["clients"] = [
                 client for client in export_data["clients"] 
                 if "username" not in client or client["username"] != "bunker"
             ]
-        
-        # Remove the default "admin" role from the exported data
         if "roles" in export_data:
             export_data["roles"] = [
                 role for role in export_data["roles"] 
                 if "rolename" not in role or role["rolename"] != "admin"
             ]
         
-        # Create a JSON response with a filename for download
         content = json.dumps(export_data, indent=4)
         filename = f"dynamic-security-export-{datetime.now().strftime('%Y%m%d%H%M%S')}.json"
         
-        logger.info(f"Preparing export response with filename: {filename}")
-        
-        # Create response with explicit content type and headers
-        response = Response(
+        return Response(
             content=content,
             media_type="application/json",
             headers={
@@ -293,10 +279,7 @@ async def export_dynsec_json(api_key: str = Security(get_api_key)):
                 "Content-Length": str(len(content))
             }
         )
-        
-        return response
-    except HTTPException as he:
-        logger.error(f"HTTP exception during export: {str(he)}")
+    except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error exporting dynamic security JSON: {str(e)}")
@@ -305,59 +288,41 @@ async def export_dynsec_json(api_key: str = Security(get_api_key)):
             detail=f"Failed to export dynamic security JSON: {str(e)}"
         )
 
-
 @router.post("/import-dynsec-json")
 async def import_dynsec_json(
     file: UploadFile = File(...),
-    api_key: str = Security(get_api_key)
+    user: dict = Depends(require_admin)  # Admin only
 ):
-    """
-    Import a dynamic security JSON file
-    """
+    """Import a dynamic security JSON file"""
     try:
-        # Read the uploaded file
         content = await file.read()
-        
         try:
-            # Parse the JSON content
             imported_data = json.loads(content)
-            logger.info(f"Successfully parsed JSON from uploaded file: {file.filename}")
         except json.JSONDecodeError:
-            logger.error(f"Invalid JSON format in uploaded file: {file.filename}")
             return {
                 "success": False,
                 "message": "The uploaded file is not valid JSON"
             }
         
-        # Validate the imported JSON structure
         try:
             imported_data = validate_dynsec_json(imported_data)
-            logger.info("JSON validation successful")
         except ValueError as e:
-            logger.error(f"Validation error: {str(e)}")
             return {
                 "success": False,
                 "message": f"Invalid dynamic security JSON format: {str(e)}"
             }
         
-        # Create a backup of the current configuration
         backup_path = create_backup()
-        logger.info(f"Created backup at: {backup_path}")
-        
-        # Merge imported config with default config to preserve critical components
         merged_config = merge_dynsec_configs(imported_data)
-        logger.info("Successfully merged configuration")
         
-        # Write the merged configuration
         if write_dynsec_json(merged_config):
-            user_count = len(merged_config["clients"]) - 1  # Subtract admin user
+            user_count = len(merged_config["clients"]) - 1
             group_count = len(merged_config["groups"])
-            role_count = len(merged_config["roles"]) - 1    # Subtract admin role
+            role_count = len(merged_config["roles"]) - 1
             
-            logger.info(f"Successfully imported configuration with {user_count} users, {group_count} groups, {role_count} roles")
             return {
                 "success": True,
-                "message": f"Successfully imported dynamic security configuration",
+                "message": "Successfully imported dynamic security configuration",
                 "backup_path": backup_path,
                 "stats": {
                     "users": user_count,
@@ -366,13 +331,10 @@ async def import_dynsec_json(
                 },
                 "need_restart": True
             }
-        else:
-            logger.error("Failed to write dynamic security configuration")
-            return {
-                "success": False,
-                "message": "Failed to write dynamic security configuration"
-            }
-            
+        return {
+            "success": False,
+            "message": "Failed to write dynamic security configuration"
+        }
     except Exception as e:
         logger.error(f"Error importing dynamic security JSON: {str(e)}")
         raise HTTPException(
@@ -381,15 +343,10 @@ async def import_dynsec_json(
         )
 
 @router.post("/reset-dynsec-json")
-async def reset_dynsec_json(api_key: str = Security(get_api_key)):
-    """
-    Reset dynamic security JSON to default configuration
-    """
+async def reset_dynsec_json(user: dict = Depends(require_admin)):  # Admin only
+    """Reset dynamic security JSON to default configuration"""
     try:
-        # Create a backup of the current configuration
         backup_path = create_backup()
-        
-        # Write the default configuration
         if write_dynsec_json(DEFAULT_CONFIG):
             return {
                 "success": True,
@@ -397,12 +354,10 @@ async def reset_dynsec_json(api_key: str = Security(get_api_key)):
                 "backup_path": backup_path,
                 "need_restart": True
             }
-        else:
-            return {
-                "success": False,
-                "message": "Failed to write default dynamic security configuration"
-            }
-            
+        return {
+            "success": False,
+            "message": "Failed to write default dynamic security configuration"
+        }
     except Exception as e:
         logger.error(f"Error resetting dynamic security JSON: {str(e)}")
         raise HTTPException(
