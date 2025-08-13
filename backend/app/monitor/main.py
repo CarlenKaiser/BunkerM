@@ -44,24 +44,17 @@ handler = RotatingFileHandler(
     maxBytes=10000000,
     backupCount=5
 )
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 # Firebase Admin SDK initialization
 try:
-    firebase_config = {
-        "type": "service_account",
-        "project_id": os.getenv("FIREBASE_PROJECT_ID"),
-        "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
-        "private_key": os.getenv("FIREBASE_PRIVATE_KEY", "").replace('\\n', '\n'),
-        "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
-        "client_id": os.getenv("FIREBASE_CLIENT_ID"),
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_CERT_URL")
-    }
+    firebase_credentials_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
+    if not firebase_credentials_path or not os.path.exists(firebase_credentials_path):
+        raise FileNotFoundError(f"Firebase credentials file not found at {firebase_credentials_path}")
     
-    cred = credentials.Certificate(firebase_config)
+    cred = credentials.Certificate(firebase_credentials_path)
     firebase_admin.initialize_app(cred)
     logger.info("Firebase initialized successfully")
 except Exception as e:
@@ -76,7 +69,7 @@ MOSQUITTO_PORT = int(os.getenv("MOSQUITTO_PORT", "1900"))
 
 # Security settings
 security = HTTPBearer()
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost").split(",")
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,bunkerm.cpmfgoperations.com").split(",")
 
 # Monitored MQTT topics
 MONITORED_TOPICS = {
@@ -225,7 +218,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://bunkerm.cpmfgoperations.com", "http://localhost"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -283,7 +276,7 @@ async def require_stats_access(user: dict = Depends(verify_firebase_token)) -> d
 async def log_request(request: Request):
     logger.info(
         f"Request: {request.method} {request.url} "
-        f"Client: {request.client.host} "
+        f"Client: {request.client.host if request.client else 'unknown'} "
         f"User-Agent: {request.headers.get('user-agent')}"
     )
 
@@ -294,6 +287,7 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Access-Control-Allow-Origin"] = "https://bunkerm.cpmfgoperations.com"
     return response
 
 def on_message(client, userdata, msg):
@@ -358,6 +352,18 @@ async def get_mqtt_stats(
     except Exception as e:
         logger.error(f"Unexpected error in get_stats endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/api/monitor/stats")
+@limiter.limit("30/minute")
+async def get_mqtt_stats_legacy(
+    request: Request,
+    nonce: Optional[str] = None,
+    timestamp: Optional[str] = None,
+    user: dict = Depends(require_stats_access)
+):
+    """Legacy endpoint for backward compatibility"""
+    await log_request(request)
+    return await get_mqtt_stats(request, user)
 
 @app.get("/api/v1/admin/users")
 async def list_users(
