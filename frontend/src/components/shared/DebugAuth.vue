@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { auth } from '@/firebase';
-import { getRedirectResult, onAuthStateChanged } from 'firebase/auth';
-import { loginWithMicrosoft} from '@/services/auth';
+import { onAuthStateChanged } from 'firebase/auth';
+import { loginWithMicrosoft, loginWithOIDCPopup } from '@/services/auth';
 
 const debugInfo = ref<any[]>([]);
 const currentUser = ref<any>(null);
@@ -21,13 +21,42 @@ function clearDebugInfo() {
   debugInfo.value = [];
 }
 
-async function testRedirectLogin() {
+async function testPopupLogin() {
   isLoading.value = true;
   try {
-    addDebugInfo('Starting redirect login test...');
-    await loginWithMicrosoft();
+    addDebugInfo('Starting OIDC popup login test...');
+    const user = await loginWithMicrosoft();
+    addDebugInfo('OIDC popup login successful', {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName,
+      emailVerified: user.emailVerified,
+      providerData: user.providerData
+    });
   } catch (error: any) {
-    addDebugInfo('Redirect login failed', {
+    addDebugInfo('OIDC popup login failed', {
+      code: error.code,
+      message: error.message
+    });
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+async function testAlternativePopupLogin() {
+  isLoading.value = true;
+  try {
+    addDebugInfo('Starting alternative OIDC popup login test...');
+    const user = await loginWithOIDCPopup();
+    addDebugInfo('Alternative OIDC popup login successful', {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName,
+      emailVerified: user.emailVerified,
+      providerData: user.providerData
+    });
+  } catch (error: any) {
+    addDebugInfo('Alternative OIDC popup login failed', {
       code: error.code,
       message: error.message
     });
@@ -46,6 +75,7 @@ function checkEnvironment() {
     cookiesEnabled: navigator.cookieEnabled,
     localStorage: typeof localStorage !== 'undefined',
     sessionStorage: typeof sessionStorage !== 'undefined',
+    popupBlocked: checkPopupBlocked(),
     firebaseConfig: {
       projectId: auth.app.options.projectId,
       authDomain: auth.app.options.authDomain,
@@ -56,40 +86,25 @@ function checkEnvironment() {
   addDebugInfo('Environment check', env);
 }
 
+function checkPopupBlocked(): boolean {
+  try {
+    const popup = window.open('', '_blank', 'width=1,height=1');
+    if (popup) {
+      popup.close();
+      return false;
+    } else {
+      return true;
+    }
+  } catch (e) {
+    return true;
+  }
+}
+
 onMounted(async () => {
   addDebugInfo('Debug component mounted');
   
   // Check environment
   checkEnvironment();
-  
-  // Check for redirect result
-  try {
-    addDebugInfo('Checking for redirect result...');
-    const result = await getRedirectResult(auth);
-    
-    if (result) {
-      addDebugInfo('Redirect result found', {
-        user: {
-          uid: result.user.uid,
-          email: result.user.email,
-          displayName: result.user.displayName,
-          emailVerified: result.user.emailVerified,
-          providerData: result.user.providerData
-        },
-        providerId: result.providerId,
-        operationType: result.operationType
-      });
-    } else {
-      addDebugInfo('No redirect result');
-    }
-  } catch (error: any) {
-    addDebugInfo('Redirect result error', {
-      code: error.code,
-      message: error.message,
-      stack: error.stack,
-      customData: error.customData
-    });
-  }
   
   // Listen for auth state changes
   onAuthStateChanged(auth, async (user) => {
@@ -116,7 +131,7 @@ onMounted(async () => {
     }
   });
   
-  // Check current URL for any parameters
+  // Check current URL for any parameters (shouldn't be needed for popup)
   const urlParams = new URLSearchParams(window.location.search);
   const urlFragment = new URLSearchParams(window.location.hash.substring(1));
   
@@ -126,15 +141,15 @@ onMounted(async () => {
   };
   
   if (Object.keys(allParams.searchParams).length > 0 || Object.keys(allParams.hashParams).length > 0) {
-    addDebugInfo('URL contains parameters', allParams);
+    addDebugInfo('URL contains parameters (unexpected for popup auth)', allParams);
   }
   
-  // Check for specific error parameters
+  // Check for specific error parameters (shouldn't occur with popup)
   const error = urlParams.get('error') || urlFragment.get('error');
   const errorDescription = urlParams.get('error_description') || urlFragment.get('error_description');
   
   if (error) {
-    addDebugInfo('URL contains error parameters', {
+    addDebugInfo('URL contains error parameters (unexpected for popup auth)', {
       error,
       errorDescription,
       errorUri: urlParams.get('error_uri') || urlFragment.get('error_uri'),
@@ -164,7 +179,7 @@ onMounted(async () => {
   <v-container>
     <v-card>
       <v-card-title class="d-flex justify-space-between align-center">
-        <span>Auth Debug Information</span>
+        <span>Auth Debug Information (OIDC Popup Mode)</span>
         <v-btn 
           variant="outlined" 
           size="small" 
@@ -181,18 +196,18 @@ onMounted(async () => {
             color="primary" 
             class="mr-2"
             :loading="isLoading"
-            @click="testRedirectLogin"
+            @click="testPopupLogin"
           >
-            Test Redirect Login
+            Test OIDC Popup (Main)
           </v-btn>
           
           <v-btn 
             color="secondary" 
             class="mr-2"
             :loading="isLoading"
-            @click="testPopupLogin"
+            @click="testAlternativePopupLogin"
           >
-            Test Popup Login
+            Test Alternative OIDC Popup
           </v-btn>
           
           <v-btn 
@@ -202,6 +217,15 @@ onMounted(async () => {
             Check Environment
           </v-btn>
         </div>
+        
+        <!-- Popup Status -->
+        <v-alert 
+          v-if="checkPopupBlocked()" 
+          type="warning" 
+          class="mb-4"
+        >
+          ⚠️ Popups appear to be blocked. Please allow popups for this site.
+        </v-alert>
         
         <v-divider class="my-4"></v-divider>
         

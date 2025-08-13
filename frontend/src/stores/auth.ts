@@ -3,7 +3,7 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { onIdTokenChanged } from 'firebase/auth';
 import { auth } from '@/firebase';
-import { loginWithMicrosoft, logoutUser, handleSSORedirect } from '@/services/auth';
+import { loginWithMicrosoft, logoutUser } from '@/services/auth';
 import type { User } from '@/types/user';
 
 export type { User } from '@/types/user';
@@ -15,19 +15,11 @@ export const useAuthStore = defineStore('auth', () => {
   const error = ref<string | null>(null);
 
   /**
-   * Initialize auth state and handle SSO redirects
+   * Initialize auth state (no redirect handling needed for popup)
    */
   async function init() {
     loading.value = true;
     error.value = null;
-
-    try {
-      // Handle any pending SSO redirect first
-      await handleSSORedirect();
-    } catch (err) {
-      console.error('SSO redirect error:', err);
-      error.value = 'Failed to process login redirect';
-    }
 
     // Listen for auth state changes
     onIdTokenChanged(auth, async (firebaseUser) => {
@@ -51,9 +43,13 @@ export const useAuthStore = defineStore('auth', () => {
           };
 
           // Get custom claims for role-based access
-          const tokenResult = await firebaseUser.getIdTokenResult();
-          if (tokenResult.claims.role) {
-            authUser.role = tokenResult.claims.role as string;
+          try {
+            const tokenResult = await firebaseUser.getIdTokenResult();
+            if (tokenResult.claims.role) {
+              authUser.role = tokenResult.claims.role as string;
+            }
+          } catch (claimsError) {
+            console.warn('Could not get custom claims:', claimsError);
           }
 
           setUser(authUser, idToken);
@@ -73,17 +69,27 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * Login with Microsoft SSO
+   * Login with OIDC provider using popup
    */
   async function loginWithMicrosoftSSO() {
     try {
+      loading.value = true;
       error.value = null;
-      await loginWithMicrosoft();
-      // Redirect happens, user will be redirected back to app
-    } catch (err) {
+      
+      // This will trigger a popup and return the user directly
+      const firebaseUser = await loginWithMicrosoft();
+      
+      // The auth state change listener will handle setting the user
+      // But we can also handle success immediately if needed
+      console.log('Login successful, user:', firebaseUser.displayName);
+      
+      return firebaseUser;
+    } catch (err: any) {
       console.error('Microsoft login error:', err);
-      error.value = 'Failed to initiate Microsoft login';
+      error.value = err.message || 'Failed to sign in with OIDC provider';
       throw err;
+    } finally {
+      loading.value = false;
     }
   }
 
@@ -95,9 +101,9 @@ export const useAuthStore = defineStore('auth', () => {
       error.value = null;
       await logoutUser();
       // Auth state change will be handled by onIdTokenChanged
-    } catch (err) {
+    } catch (err: any) {
       console.error('Logout error:', err);
-      error.value = 'Failed to logout';
+      error.value = err.message || 'Failed to logout';
       throw err;
     }
   }
