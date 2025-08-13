@@ -87,11 +87,7 @@ function clearError() {
       {{ error }}
     </v-alert>
     
-    <!-- Loading indicator -->
-    <div v-if="authStore.loading && !loading" class="mt-4 text-center">
-      <v-progress-circular indeterminate size="24" class="me-2"></v-progress-circular>
-      <span class="text-body-2">Checking authentication status...</span>
-    </div>
+
   </div>
 </template>
 
