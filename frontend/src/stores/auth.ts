@@ -27,44 +27,7 @@ export const useAuthStore = defineStore('auth', () => {
         if (firebaseUser) {
           // User is signed in
           const idToken = await firebaseUser.getIdToken();
-          try {
-            // Set admin claim if not already set
-            const tokenResult = await firebaseUser.getIdTokenResult(true);
-            if (!tokenResult.claims.role) {
-              console.log('Setting admin role for development user');
-              
-              // Get fresh ID token
-              const idToken = await firebaseUser.getIdToken(true);
-              
-              const response = await fetch('https://bunkerm.cpmfgoperations.com/api/auth/setup-admin', {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${idToken}`,
-                  'Content-Type': 'application/json'
-                }
-              });
           
-              // Add response handling
-              if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}));
-                console.error('Admin setup failed:', {
-                  status: response.status,
-                  statusText: response.statusText,
-                  error: errorData.error || 'Unknown error'
-                });
-                throw new Error(errorData.error || 'Admin setup failed');
-              }
-          
-              const result = await response.json();
-              console.log('Admin setup successful:', result.message);
-              
-              // Refresh token to get new claims
-              await firebaseUser.getIdToken(true);
-            }
-          } catch (error) {
-            console.error('Error in admin setup process:', error);
-            // Handle error in your UI if needed
-          }
           
           // Validate required fields
           if (!firebaseUser.email) {
@@ -152,7 +115,6 @@ export const useAuthStore = defineStore('auth', () => {
   function setUser(newUser: User | null, authToken: string | null = null) {
     user.value = newUser;
     token.value = authToken;
-    console.log('User token:', authToken);
   }
 
   /**
