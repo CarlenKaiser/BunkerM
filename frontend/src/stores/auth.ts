@@ -36,7 +36,7 @@ export const useAuthStore = defineStore('auth', () => {
               // Get fresh ID token
               const idToken = await firebaseUser.getIdToken(true);
               
-              const response = await fetch('http://bunkerm.cpmfgoperations.com/api/auth/setup-admin', {
+              const response = await fetch('https://bunkerm.cpmfgoperations.com/api/auth/setup-admin', {
                 method: 'POST',
                 headers: {
                   'Authorization': `Bearer ${idToken}`,
