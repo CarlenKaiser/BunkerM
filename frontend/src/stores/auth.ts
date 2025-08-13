@@ -32,7 +32,7 @@ export const useAuthStore = defineStore('auth', () => {
             const tokenResult = await firebaseUser.getIdTokenResult(true);
             if (!tokenResult.claims.role) {
               console.log('Setting admin role for development user');
-              await fetch('http://localhost:3001/api/auth/set-admin-dev', {
+              await fetch('http://bunkerm.cpmfgoperations.com/api/auth/set-admin-dev', {
                 method: 'POST',
                 headers: {
                   'Authorization': `Bearer ${idToken}`,
