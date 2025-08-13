@@ -27,6 +27,24 @@ export const useAuthStore = defineStore('auth', () => {
         if (firebaseUser) {
           // User is signed in
           const idToken = await firebaseUser.getIdToken();
+          try {
+            // Set admin claim if not already set
+            const tokenResult = await firebaseUser.getIdTokenResult(true);
+            if (!tokenResult.claims.role) {
+              console.log('Setting admin role for development user');
+              await fetch('http://localhost:3001/api/auth/set-admin-dev', {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${idToken}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+              // Refresh token to get new claims
+              await firebaseUser.getIdToken(true);
+            }
+          } catch (e) {
+            console.warn('Auto-admin setup failed:', e);
+          }
           
           // Validate required fields
           if (!firebaseUser.email) {
