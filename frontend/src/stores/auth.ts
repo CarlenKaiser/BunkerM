@@ -32,18 +32,38 @@ export const useAuthStore = defineStore('auth', () => {
             const tokenResult = await firebaseUser.getIdTokenResult(true);
             if (!tokenResult.claims.role) {
               console.log('Setting admin role for development user');
-              await fetch('http://bunkerm.cpmfgoperations.com/api/auth/set-admin-dev', {
+              
+              // Get fresh ID token
+              const idToken = await firebaseUser.getIdToken(true);
+              
+              const response = await fetch('http://bunkerm.cpmfgoperations.com/api/auth/setup-admin', {
                 method: 'POST',
                 headers: {
                   'Authorization': `Bearer ${idToken}`,
                   'Content-Type': 'application/json'
                 }
               });
+          
+              // Add response handling
+              if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                console.error('Admin setup failed:', {
+                  status: response.status,
+                  statusText: response.statusText,
+                  error: errorData.error || 'Unknown error'
+                });
+                throw new Error(errorData.error || 'Admin setup failed');
+              }
+          
+              const result = await response.json();
+              console.log('Admin setup successful:', result.message);
+              
               // Refresh token to get new claims
               await firebaseUser.getIdToken(true);
             }
-          } catch (e) {
-            console.warn('Auto-admin setup failed:', e);
+          } catch (error) {
+            console.error('Error in admin setup process:', error);
+            // Handle error in your UI if needed
           }
           
           // Validate required fields

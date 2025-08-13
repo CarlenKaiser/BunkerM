@@ -25,7 +25,7 @@ function log(message) {
 // Middleware
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
-    ? ['https://bunkerm.cpmfgoperations.com'] // Replace with your actual domain
+    ? ['https://bunkerm.cpmfgoperations.com']
     : '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key']
@@ -196,24 +196,37 @@ app.delete('/api/auth/users/:uid', verifyFirebaseToken, requireAdmin, async (req
 // Set initial admin user (one-time setup endpoint)
 app.post('/api/auth/setup-admin', verifyFirebaseToken, async (req, res) => {
   try {
-    // Check if any admin already exists
+    console.log('Request received:', {
+      uid: req.firebaseUser.uid,
+      email: req.firebaseUser.email,
+      headers: req.headers
+    });
+
     const listResult = await admin.auth().listUsers(1000);
     const hasAdmin = listResult.users.some(user => 
       user.customClaims && user.customClaims.role === 'admin'
     );
     
     if (hasAdmin) {
+      console.log('Admin exists check failed - admin already exists');
       return res.status(400).json({ error: 'Admin user already exists' });
     }
     
-    // Make current user an admin
     await admin.auth().setCustomUserClaims(req.firebaseUser.uid, { role: 'admin' });
     
-    log(`Set user ${req.firebaseUser.uid} as initial admin`);
+    console.log(`Successfully set admin claims for ${req.firebaseUser.uid}`);
     res.json({ message: 'Initial admin user created successfully' });
   } catch (error) {
-    log(`Error setting up admin: ${error.message}`);
-    res.status(500).json({ error: 'Failed to setup admin user' });
+    console.error('Full error details:', {
+      message: error.message,
+      stack: error.stack,
+      code: error.code,
+      fullError: JSON.stringify(error, Object.getOwnPropertyNames(error))
+    });
+    res.status(500).json({ 
+      error: 'Failed to setup admin user',
+      details: error.message 
+    });
   }
 });
 
