@@ -1,137 +1,73 @@
 import express from 'express';
-import fs from 'fs';
 import path from 'path';
 import cors from 'cors';
 import bodyParser from 'body-parser';
-import crypto from 'crypto';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
-import { exec } from 'child_process';
+import fs from 'fs';
+import admin from 'firebase-admin';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.AUTH_API_PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
-// Enhanced logging
+// Initialize Firebase Admin SDK
+admin.initializeApp({
+  credential: admin.credential.applicationDefault(),
+});
+
 function log(message) {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${message}`);
 }
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  log(`Error: ${err.message}`);
-  console.error(err.stack);
-  res.status(500).json({ error: 'Internal server error' });
-});
-
 // Middleware
 app.use(cors({
-  origin: '*',
+  origin: process.env.NODE_ENV === 'production' 
+    ? ['https://bunkerm.cpmfgoperations.com'] // Replace with your actual domain
+    : '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key']
 }));
 app.use(bodyParser.json());
 
-// Path to the users database file
-const DB_DIR = process.env.DB_PATH || '/data';
-const USERS_FILE = path.join(DB_DIR, 'users.json');
-const PASSWORDS_FILE = path.join(DB_DIR, 'passwords.json');
+// Verify Firebase ID token middleware
+async function verifyFirebaseToken(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
 
-// Ensure the data directory exists
-if (!fs.existsSync(DB_DIR)) {
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized: No token provided' });
+  }
+
   try {
-    fs.mkdirSync(DB_DIR, { recursive: true });
-    log(`Created data directory at ${DB_DIR}`);
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    req.firebaseUser = decodedToken;
+    next();
   } catch (error) {
-    log(`Error creating data directory: ${error.message}`);
-    console.error(error);
+    log(`Firebase token verification error: ${error.message}`);
+    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
   }
 }
 
-// Initialize database files if they don't exist
-function initializeDatabase() {
+// Require admin role middleware - FIXED
+async function requireAdmin(req, res, next) {
   try {
-    if (!fs.existsSync(USERS_FILE)) {
-      // Create default admin user
-      const defaultUser = {
-        id: '1',
-        email: 'admin@example.com',
-        firstName: 'Admin',
-        lastName: 'User',
-        createdAt: new Date().toISOString()
-      };
-      
-      fs.writeFileSync(USERS_FILE, JSON.stringify([defaultUser], null, 2));
-      log('Created users database with default admin user');
+    // Fetch the user record to get fresh custom claims
+    const userRecord = await admin.auth().getUser(req.firebaseUser.uid);
+    const customClaims = userRecord.customClaims || {};
+    
+    if (!customClaims.role || customClaims.role !== 'admin') {
+      return res.status(403).json({ error: 'Forbidden: Admin access required' });
     }
     
-    if (!fs.existsSync(PASSWORDS_FILE)) {
-      // Create default admin password (password123) - hashed with bcrypt
-      const salt = bcrypt.genSaltSync(10);
-      const hashedPassword = bcrypt.hashSync('password123', salt);
-      
-      const passwords = {
-        '1': hashedPassword
-      };
-      
-      fs.writeFileSync(PASSWORDS_FILE, JSON.stringify(passwords, null, 2));
-      log('Created passwords database with default admin password');
-    }
+    // Attach user record for potential use in routes
+    req.userRecord = userRecord;
+    next();
   } catch (error) {
-    log(`Error initializing database: ${error.message}`);
-    console.error(error);
-  }
-}
-
-// Initialize the database
-initializeDatabase();
-
-// Helper functions to read/write database
-function getUsers() {
-  try {
-    const data = fs.readFileSync(USERS_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    log(`Error reading users file: ${error.message}`);
-    console.error(error);
-    return [];
-  }
-}
-
-function getPasswords() {
-  try {
-    const data = fs.readFileSync(PASSWORDS_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    log(`Error reading passwords file: ${error.message}`);
-    console.error(error);
-    return {};
-  }
-}
-
-function saveUsers(users) {
-  try {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
-    log('Users saved successfully');
-  } catch (error) {
-    log(`Error saving users: ${error.message}`);
-    console.error(error);
-  }
-}
-
-function savePasswords(passwords) {
-  try {
-    fs.writeFileSync(PASSWORDS_FILE, JSON.stringify(passwords, null, 2));
-    log('Passwords saved successfully');
-  } catch (error) {
-    log(`Error saving passwords: ${error.message}`);
-    console.error(error);
+    log(`Error checking admin role: ${error.message}`);
+    return res.status(500).json({ error: 'Error verifying permissions' });
   }
 }
 
@@ -141,223 +77,185 @@ app.get('/api/auth/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// API Routes
-app.post('/api/auth/login', (req, res) => {
+// Get current user's profile
+app.get('/api/auth/profile', verifyFirebaseToken, async (req, res) => {
   try {
-    log(`Login attempt for email: ${req.body.email}`);
-    
-    const { email, password } = req.body;
-    
-    if (!email || !password) {
-      log('Login failed: Email and password are required');
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
-    
-    const users = getUsers();
-    const passwords = getPasswords();
-    
-    const user = users.find(u => u.email === email);
-    
-    if (!user) {
-      log(`Login failed: User not found for email: ${email}`);
-      return res.status(401).json({ error: 'User not found' });
-    }
-    
-    // Use bcrypt to compare passwords
-    if (!bcrypt.compareSync(password, passwords[user.id])) {
-      log(`Login failed: Invalid password for email: ${email}`);
-      return res.status(401).json({ error: 'Invalid password' });
-    }
-    
-    // Generate JWT token
-    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '24h' });
-    
-    log(`Login successful for email: ${email}`);
+    const userRecord = await admin.auth().getUser(req.firebaseUser.uid);
     res.json({
-      user,
-      token
+      uid: userRecord.uid,
+      email: userRecord.email,
+      displayName: userRecord.displayName,
+      photoURL: userRecord.photoURL,
+      emailVerified: userRecord.emailVerified,
+      disabled: userRecord.disabled,
+      metadata: userRecord.metadata,
+      providerData: userRecord.providerData,
+      customClaims: userRecord.customClaims || {},
     });
   } catch (error) {
-    log(`Error in login: ${error.message}`);
-    console.error(error);
-    res.status(500).json({ error: 'Internal server error' });
+    log(`Error fetching user profile: ${error.message}`);
+    res.status(500).json({ error: 'Failed to fetch user profile' });
   }
 });
 
-app.post('/api/auth/register', (req, res) => {
+// List all Firebase users (paginated) — Admin only
+app.get('/api/auth/users', verifyFirebaseToken, requireAdmin, async (req, res) => {
+  const maxResults = 1000;
+  const pageToken = req.query.pageToken || undefined;
+
   try {
-    log(`Register attempt for email: ${req.body.email}`);
-    
-    const { email, password, firstName, lastName } = req.body;
-    
-    if (!email || !password || !firstName || !lastName) {
-      log('Registration failed: All fields are required');
-      return res.status(400).json({ error: 'All fields are required' });
-    }
-    
-    const users = getUsers();
-    
-    // Check if user already exists
-    if (users.some(u => u.email === email)) {
-      log(`Registration failed: User with email ${email} already exists`);
-      return res.status(400).json({ error: 'User with this email already exists' });
-    }
-    
-    // Create new user with UUID
-    const newUser = {
-      id: uuidv4(),
-      email,
-      firstName,
-      lastName,
-      createdAt: new Date().toISOString()
-    };
-    
-    // Add user to database
-    users.push(newUser);
-    saveUsers(users);
-    
-    // Hash password with bcrypt and save
-    const salt = bcrypt.genSaltSync(10);
-    const hashedPassword = bcrypt.hashSync(password, salt);
-    
-    const passwords = getPasswords();
-    passwords[newUser.id] = hashedPassword;
-    savePasswords(passwords);
-    
-    // Generate JWT token
-    const token = jwt.sign({ userId: newUser.id }, JWT_SECRET, { expiresIn: '24h' });
-    
-    log(`Registration successful for email: ${email}`);
-    res.status(201).json({
-      user: newUser,
-      token
+    const listUsersResult = await admin.auth().listUsers(maxResults, pageToken);
+    const users = listUsersResult.users.map(user => ({
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName,
+      emailVerified: user.emailVerified,
+      disabled: user.disabled,
+      customClaims: user.customClaims || {},
+      metadata: user.metadata,
+      providerData: user.providerData,
+    }));
+    res.json({
+      users,
+      nextPageToken: listUsersResult.pageToken || null,
     });
   } catch (error) {
-    log(`Error in register: ${error.message}`);
-    console.error(error);
-    res.status(500).json({ error: 'Internal server error' });
+    log(`Error listing users: ${error.message}`);
+    res.status(500).json({ error: 'Failed to list users' });
   }
 });
 
-app.get('/api/auth/users', (req, res) => {
-  try {
-    log('Getting all users');
-    const users = getUsers();
-    res.json(users);
-  } catch (error) {
-    log(`Error getting users: ${error.message}`);
-    console.error(error);
-    res.status(500).json({ error: 'Internal server error' });
+// Update user profile and roles (Admin only)
+app.put('/api/auth/users/:uid', verifyFirebaseToken, requireAdmin, async (req, res) => {
+  const { uid } = req.params;
+  const { displayName, photoURL, disabled, role } = req.body;
+
+  // Validate role if provided
+  if (role !== undefined && !['admin', 'moderator', 'user', null, ''].includes(role)) {
+    return res.status(400).json({ error: 'Invalid role. Must be admin, moderator, user, or empty' });
   }
-});
 
-app.delete('/api/auth/users/:id', (req, res) => {
-  try {
-    const { id } = req.params;
-    log(`Deleting user with ID: ${id}`);
-    
-    const users = getUsers();
-    const passwords = getPasswords();
-    
-    // Filter out the user to delete
-    const updatedUsers = users.filter(user => user.id !== id);
-    
-    // Remove password
-    if (passwords[id]) {
-      delete passwords[id];
-    }
-    
-    saveUsers(updatedUsers);
-    savePasswords(passwords);
-    
-    log(`User with ID ${id} deleted successfully`);
-    res.json({ message: 'User deleted successfully' });
-  } catch (error) {
-    log(`Error deleting user: ${error.message}`);
-    console.error(error);
-    res.status(500).json({ error: 'Internal server error' });
+  // Prevent admin from removing their own admin role
+  if (uid === req.firebaseUser.uid && role && role !== 'admin') {
+    return res.status(400).json({ error: 'Cannot remove your own admin privileges' });
   }
-});
 
-app.post('/api/auth/reset', (req, res) => {
   try {
-    log('Resetting authentication data');
-    // Reset the database to initial state
-    initializeDatabase();
-    res.json({ message: 'Authentication data reset successfully' });
-  } catch (error) {
-    log(`Error resetting auth data: ${error.message}`);
-    console.error(error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+    const updateData = {};
+    if (displayName !== undefined) updateData.displayName = displayName;
+    if (photoURL !== undefined) updateData.photoURL = photoURL;
+    if (disabled !== undefined) updateData.disabled = disabled;
 
-// Broker logs endpoint
-app.get('/api/logs/broker', (req, res) => {
-  try {
-    log('Getting broker logs');
-    const logPath = '/var/log/mosquitto/mosquitto.log';
+    const updatedUser = await admin.auth().updateUser(uid, updateData);
 
-    if (!fs.existsSync(logPath)) {
-      log(`Broker log file not found at ${logPath}`);
-      return res.status(404).json({ error: 'Broker log file not found', logs: [] });
+    // Update custom claims (roles)
+    if (role !== undefined) {
+      if (role && role.trim()) {
+        await admin.auth().setCustomUserClaims(uid, { role: role.trim() });
+      } else {
+        await admin.auth().setCustomUserClaims(uid, { role: 'user' });
+      }
     }
 
-    try {
-      // Read the last 1000 lines of the log file
-      const fileContent = fs.readFileSync(logPath, 'utf8');
-      const lines = fileContent.toString().split('\n');
-      const lastLines = lines.slice(-1000).filter(line => line.trim() !== '');
+    // Fetch updated claims to return
+    const refreshedUser = await admin.auth().getUser(uid);
 
-      // Parse each line to extract timestamp and message
-      const logs = lastLines.map(line => {
-        const logLine = line.toString().trim();
-        if (!logLine) {
-          return null;
-        }
-
-        // Try to extract timestamp from the Mosquitto log format
-        // Example: 1709669577: New connection from 127.0.0.1:49816
-        const parts = logLine.split(': ', 2);
-        let timestamp = new Date().toISOString();
-        let message = logLine;
-
-        if (parts.length === 2) {
-          try {
-            // Convert Unix timestamp to ISO string if it's a number
-            const unixTimestamp = parseInt(parts[0], 10);
-            if (!isNaN(unixTimestamp)) {
-              timestamp = new Date(unixTimestamp * 1000).toISOString();
-              message = parts[1];
-            }
-          } catch (e) {
-            // If parsing fails, keep the defaults
-            log(`Error parsing timestamp: ${e.message}`);
-          }
-        }
-
-        return {
-          timestamp,
-          message
-        };
-      }).filter(entry => entry !== null);
-
-      res.json({ logs });
-    } catch (readError) {
-      log(`Error reading log file: ${readError.message}`);
-      console.error(readError);
-      res.status(500).json({ error: 'Error reading log file', logs: [] });
-    }
+    res.json({
+      message: 'User updated successfully',
+      uid: refreshedUser.uid,
+      email: refreshedUser.email,
+      displayName: refreshedUser.displayName,
+      photoURL: refreshedUser.photoURL,
+      disabled: refreshedUser.disabled,
+      customClaims: refreshedUser.customClaims || {},
+    });
   } catch (error) {
-    log(`Error in broker logs endpoint: ${error.message}`);
-    console.error(error);
-    res.status(500).json({ error: 'Internal server error', logs: [] });
+    log(`Error updating user ${uid}: ${error.message}`);
+    res.status(500).json({ error: 'Failed to update user', details: error.message });
   }
 });
 
-// Start the server
+// Delete a user (Admin only)
+app.delete('/api/auth/users/:uid', verifyFirebaseToken, requireAdmin, async (req, res) => {
+  const { uid } = req.params;
+
+  if (uid === req.firebaseUser.uid) {
+    return res.status(400).json({ error: 'Cannot delete currently authenticated user' });
+  }
+
+  try {
+    await admin.auth().deleteUser(uid);
+    log(`Deleted user with UID: ${uid}`);
+    res.json({ message: `User ${uid} deleted successfully` });
+  } catch (error) {
+    log(`Error deleting user ${uid}: ${error.message}`);
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+// Set initial admin user (one-time setup endpoint)
+app.post('/api/auth/setup-admin', verifyFirebaseToken, async (req, res) => {
+  try {
+    // Check if any admin already exists
+    const listResult = await admin.auth().listUsers(1000);
+    const hasAdmin = listResult.users.some(user => 
+      user.customClaims && user.customClaims.role === 'admin'
+    );
+    
+    if (hasAdmin) {
+      return res.status(400).json({ error: 'Admin user already exists' });
+    }
+    
+    // Make current user an admin
+    await admin.auth().setCustomUserClaims(req.firebaseUser.uid, { role: 'admin' });
+    
+    log(`Set user ${req.firebaseUser.uid} as initial admin`);
+    res.json({ message: 'Initial admin user created successfully' });
+  } catch (error) {
+    log(`Error setting up admin: ${error.message}`);
+    res.status(500).json({ error: 'Failed to setup admin user' });
+  }
+});
+
+// Reset all users except current user (Admin only)
+app.delete('/api/auth/reset', verifyFirebaseToken, requireAdmin, async (req, res) => {
+  try {
+    let nextPageToken = undefined;
+    const allUserUids = [];
+
+    do {
+      const result = await admin.auth().listUsers(1000, nextPageToken);
+      result.users.forEach(user => allUserUids.push(user.uid));
+      nextPageToken = result.pageToken;
+    } while (nextPageToken);
+
+    const currentUid = req.firebaseUser.uid;
+    const uidsToDelete = allUserUids.filter(uid => uid !== currentUid);
+
+    const BATCH_SIZE = 1000;
+    for (let i = 0; i < uidsToDelete.length; i += BATCH_SIZE) {
+      const batch = uidsToDelete.slice(i, i + BATCH_SIZE);
+      await admin.auth().deleteUsers(batch);
+    }
+
+    log(`Reset all users except current user (${currentUid}), deleted ${uidsToDelete.length} users.`);
+    res.json({ message: `Deleted ${uidsToDelete.length} users. Current user preserved.` });
+  } catch (error) {
+    log(`Error resetting all users: ${error.message}`);
+    res.status(500).json({ error: 'Failed to reset all users', details: error.message });
+  }
+});
+
+// Error handling middleware (should be last)
+app.use((err, req, res, next) => {
+  log(`Error: ${err.message}`);
+  console.error(err.stack);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// Start server
 app.listen(PORT, () => {
   log(`Auth API server running on port ${PORT}`);
 });
 
-export default app; 
+export default app;

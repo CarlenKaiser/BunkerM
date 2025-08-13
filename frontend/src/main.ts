@@ -10,10 +10,6 @@ import VueApexCharts from 'vue3-apexcharts';
 import Antd from 'ant-design-vue';
 import 'ant-design-vue/dist/reset.css';
 
-// Import the auth store
-import { useAuthStore } from '@/stores/auth';
-import { initLocalAuth } from '@/services/localAuth';
-
 // google-fonts
 import '@fontsource/public-sans/400.css';
 import '@fontsource/public-sans/500.css';
@@ -23,7 +19,7 @@ import '@fontsource/public-sans/700.css';
 //Mock Api data
 import { fakeBackend } from '@/utils/helpers/fake-backend';
 
-//i18
+//i18n
 import { createI18n } from 'vue-i18n';
 import messages from '@/utils/locales/messages';
 
@@ -37,22 +33,9 @@ const i18n = createI18n({
 // Initialize the app
 async function initApp() {
   try {
-    // IMPORTANT: Removed the clearAuthData() call that was resetting authentication on every load
-    
-    // Initialize local authentication system
-    console.log('Initializing local authentication system...');
-    await initLocalAuth();
-    
-    // Double-check that passwords are initialized
-    const passwordsJson = localStorage.getItem('passwords');
-    if (!passwordsJson) {
-      console.warn('Passwords not found after initialization, retrying...');
-      await initLocalAuth();
-    }
-    
     const app = createApp(App);
     const pinia = createPinia();
-    
+
     fakeBackend();
     app.use(router);
     app.use(PerfectScrollbarPlugin);
@@ -62,13 +45,10 @@ async function initApp() {
     app.use(i18n);
     app.use(VueApexCharts);
     app.use(vuetify);
-    
-    // Initialize auth store
-    const authStore = useAuthStore();
-    
+
     // Mount the app
     app.mount('#app');
-    
+
     console.log('Application initialized successfully');
   } catch (error) {
     console.error('Failed to initialize application:', error);

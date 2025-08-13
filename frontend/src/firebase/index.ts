@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';  // <--- import Firestore
+import { getAuth, OAuthProvider, signInWithRedirect, getRedirectResult } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 import { getRuntimeConfig } from '@/config/runtime';
 
 const runtimeConfig = getRuntimeConfig();
@@ -24,5 +24,37 @@ const auth = getAuth(app);
 // Initialize Firestore database
 const db = getFirestore(app);
 
-export { auth, db };
-export const firestore = getFirestore(app);
+const oidcProvider = new OAuthProvider('oidc.bunkerm-azuread-single-tenant');
+oidcProvider.addScope('openid');
+oidcProvider.addScope('profile');
+oidcProvider.addScope('email');
+
+/**
+ * Starts the OIDC sign-in with redirect flow
+ */
+function signInWithOIDCRedirect() {
+  signInWithRedirect(auth, oidcProvider);
+}
+
+/**
+ * Checks for and processes the redirect result after coming back from OIDC provider
+ */
+async function handleRedirectResult() {
+  try {
+    const result = await getRedirectResult(auth);
+    if (result) {
+      const user = result.user;
+      console.log('User signed in via OIDC redirect:', user);
+      return user;
+    } else {
+      // No redirect result available (not returning from redirect)
+      return null;
+    }
+  } catch (error) {
+    console.error('Error handling OIDC redirect result:', error);
+    throw error;
+  }
+}
+
+export { auth, db, signInWithOIDCRedirect, handleRedirectResult };
+export const firestore = db;
