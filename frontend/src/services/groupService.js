@@ -7,10 +7,6 @@
 # */
 // services/groupService.js
 import { api } from './api';
-import { generateNonce } from '../utils/security';
-
-// Helper function to get current timestamp in seconds
-const getCurrentTimestamp = () => Math.floor(Date.now() / 1000);
 
 export const groupService = {
   async getGroups() {
