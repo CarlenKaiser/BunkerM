@@ -15,7 +15,22 @@ const getCurrentTimestamp = () => Math.floor(Date.now() / 1000);
 export const roleService = {
   async getRoles() {
     const response = await api.get('/roles');
-    return response.data.roles.split('\n').filter(Boolean).map(name => ({ name }));
+    
+    // Handle different response formats
+    const roles = response.data.roles || response.data || [];
+    
+    // If it's already an array, return it mapped
+    if (Array.isArray(roles)) {
+      return roles.map(role => typeof role === 'string' ? { name: role } : role);
+    }
+    
+    // If it's a string, split it
+    if (typeof roles === 'string') {
+      return roles.split('\n').filter(Boolean).map(name => ({ name }));
+    }
+    
+    // Fallback to empty array
+    return [];
   },
 
   async getRole(name) {
@@ -56,4 +71,3 @@ export const roleService = {
     return response.data;
   }
 };
-

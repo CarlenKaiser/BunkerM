@@ -26,17 +26,22 @@ export const groupService = {
     return response.data.groups.split('\n').filter(Boolean).map(name => ({ name }));
   },
 
-  async getGroup(name) {
+  async getGroups() {
     const timestamp = getCurrentTimestamp();
     const nonce = generateNonce();
     
-    const response = await api.get(`/groups/${name}`, {
+    const response = await api.get('/groups', {
       params: {
         nonce,
         timestamp
       }
     });
-    return response.data;
+    
+    // If the API returns an array directly
+    const groups = response.data || [];
+    return Array.isArray(groups) 
+      ? groups.map(group => typeof group === 'string' ? { name: group } : group)
+      : [];
   },
 
   async createGroup(name) {
