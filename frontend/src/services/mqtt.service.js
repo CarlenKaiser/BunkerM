@@ -132,7 +132,7 @@ export const mqttService = {
 
   async getRoles() {
     const response = await api.get('/roles');
-    console.log("Roles Found: ", roles);
+    console.log("Roles Found: ", response.data.roles);
     return response.data.roles.split('\n').filter(Boolean).map(name => ({ name }));
   },
 
@@ -156,7 +156,7 @@ export const mqttService = {
 
   async getGroups() {
     const response = await api.get('/groups');
-    console.log("Groups Found: ", groups);
+    console.log("Groups Found: ", response.data.groups);
     return response.data.groups.split('\n').filter(Boolean).map(name => ({ name }));
   },
 
