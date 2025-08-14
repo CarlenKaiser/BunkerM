@@ -22,9 +22,9 @@ class HistoricalDataStorage:
         """Initialize the JSON file with proper structure if it doesn't exist"""
         if not os.path.exists(self.filename):
             initial_data = {
-                "daily_messages": [],  # For message counts
-                "hourly": [],         # For bytes data
-                "daily": []           # For bytes data
+                "daily_messages": [],
+                "hourly": [],
+                "daily": []
             }
             self.save_data(initial_data)
 

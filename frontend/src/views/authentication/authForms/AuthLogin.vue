@@ -1,32 +1,49 @@
-/* # Copyright (c) 2025 BunkerM
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# You may not use this file except in compliance with the License.
-# http://www.apache.org/licenses/LICENSE-2.0
-# Distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
-# */
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, onMounted, watch } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import type { Ref } from 'vue';
 
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
 
-const loading = ref(false);
-const error = ref('');
+const loading: Ref<boolean> = ref(false);
+const error: Ref<string> = ref('');
+
+// Watch for authentication changes
+watch(
+  () => authStore.isAuthenticated,
+  (isAuthenticated: boolean) => {
+    if (isAuthenticated) {
+      handleRedirect();
+    }
+  }
+);
 
 // Initialize auth store on mount
 onMounted(async () => {
-  // Initialize the auth store to check for existing sessions
-  await authStore.init();
-  
-  // If already authenticated, redirect to dashboard
-  if (authStore.isAuthenticated) {
-    console.log('User already authenticated, redirecting to dashboard');
-    router.push('/dashboard');
+  try {
+    await authStore.init();
+    
+    // If already authenticated, redirect immediately
+    if (authStore.isAuthenticated) {
+      handleRedirect();
+    }
+  } catch (err) {
+    console.error('Auth initialization error:', err);
+    error.value = 'Failed to initialize authentication';
   }
 });
+
+function handleRedirect() {
+  const redirectPath = route.query.redirect 
+    ? String(route.query.redirect)
+    : '/dashboard';
+  
+  console.log('Redirecting to:', redirectPath);
+  router.push(redirectPath);
+}
 
 async function loginWithAzureAD() {
   loading.value = true;
@@ -34,12 +51,10 @@ async function loginWithAzureAD() {
 
   try {
     await authStore.loginWithMicrosoftSSO();
-    
-    // Success - redirect to dashboard
-    router.push('/dashboard');
-  } catch (err: any) {
+    // The redirect will be handled by the watcher
+  } catch (err: unknown) {
     console.error('Azure AD login failed:', err);
-    error.value = err.message || 'Login failed. Please try again.';
+    error.value = err instanceof Error ? err.message : 'Login failed. Please try again.';
   } finally {
     loading.value = false;
   }
@@ -52,6 +67,7 @@ function clearError() {
 </script>
 
 <template>
+  <!-- Your template remains the same -->
   <div class="d-flex justify-center align-center">
     <h3 class="text-h3 text-center mb-0">Login</h3>
   </div>
@@ -86,12 +102,11 @@ function clearError() {
     >
       {{ error }}
     </v-alert>
-    
-
   </div>
 </template>
 
 <style lang="scss" scoped>
+/* Your styles remain the same */
 .loginForm {
   min-height: 200px;
   justify-content: center;
