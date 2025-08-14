@@ -6,42 +6,56 @@
 # Distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
 # */
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
+import type { Router } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 
-const router = useRouter();
+const router: Router = useRouter();
 const authStore = useAuthStore();
 
-const loading = ref(false);
-const error = ref('');
+const loading = ref<boolean>(false);
+const error = ref<string>('');
 
 // Initialize auth store on mount
 onMounted(async () => {
-  // Initialize the auth store to check for existing sessions
-  await authStore.init();
-  if (authStore.isAuthenticated) {
-    console.log('User already authenticated, redirecting to dashboard');
-    router.push('/dashboard');
+  try {
+    // Initialize the auth store to check for existing sessions
+    await authStore.init();
+    if (authStore.isAuthenticated) {
+      console.log('User already authenticated, redirecting to dashboard');
+      await router.replace('/dashboard');
+    }
+  } catch (err) {
+    console.error('Failed to initialize auth store:', err);
   }
 });
 
-async function loginWithAzureAD() {
+async function loginWithAzureAD(): Promise<void> {
+  console.log('Starting Azure AD login...');
   loading.value = true;
   error.value = '';
 
   try {
     await authStore.loginWithMicrosoftSSO();
-    router.push('/dashboard');
+    console.log('Login successful, isAuthenticated:', authStore.isAuthenticated);
+    
+    // Wait for next tick to ensure reactivity updates are processed
+    await nextTick();
+    
+    // Use replace to ensure navigation guards are triggered
+    await router.replace('/dashboard');
+    console.log('Navigation to dashboard attempted');
+    
   } catch (err: any) {
     console.error('Azure AD login failed:', err);
-    error.value = err.message || 'Login failed. Please try again.';
+    error.value = err?.message || 'Login failed. Please try again.';
   } finally {
     loading.value = false;
   }
 }
 
-function clearError() {
+function clearError(): void {
   error.value = '';
   authStore.clearError();
 }
@@ -82,8 +96,6 @@ function clearError() {
     >
       {{ error }}
     </v-alert>
-    
-
   </div>
 </template>
 

@@ -15,10 +15,12 @@ import json
 import random
 import string
 import time
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Security, status
-from fastapi.security.api_key import APIKeyHeader
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Security, status, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+import firebase_admin
+from firebase_admin import auth, exceptions as firebase_exceptions
 
 # Router setup
 router = APIRouter(tags=["password_import"])
@@ -27,24 +29,80 @@ router = APIRouter(tags=["password_import"])
 logger = logging.getLogger(__name__)
 
 # Environment variables
-API_KEY = os.getenv("API_KEY")
 MOSQUITTO_PASSWD_PATH = "/etc/mosquitto/mosquitto_passwd"
 DYNSEC_PATH = os.getenv("DYNSEC_PATH", "/var/lib/mosquitto/dynamic-security.json")
 UPLOAD_DIR = "/tmp/mosquitto_uploads"
 
 # Security
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+security = HTTPBearer()
 
 # Create upload directory if it doesn't exist
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-async def get_api_key(api_key_header: str = Security(api_key_header)):
-    if api_key_header != API_KEY:
-        logger.warning(f"Invalid API key attempt")
+# Authentication functions
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Security(security),
+    request: Request = None
+) -> dict:
+    """Enhanced Firebase authentication with role support"""
+    try:
+        if not credentials.scheme == "Bearer":
+            logger.warning(f"Invalid auth scheme from {request.client.host if request else 'unknown'}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid authentication scheme"
+            )
+        
+        decoded_token = auth.verify_id_token(credentials.credentials)
+        user_role = decoded_token.get('role', 'user')
+        
+        return {
+            'uid': decoded_token['uid'],
+            'email': decoded_token.get('email'),
+            'role': user_role,
+            'is_admin': user_role == 'admin',
+            'is_moderator': user_role in ['admin', 'moderator'],
+            'can_manage': user_role in ['admin', 'moderator']
+        }
+        
+    except firebase_exceptions.InvalidIdTokenError:
+        logger.error("Invalid Firebase ID token provided")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API Key"
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid authentication token"
         )
-    return api_key_header
+    except firebase_exceptions.ExpiredIdTokenError:
+        logger.error("Expired Firebase ID token provided")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authentication token has expired"
+        )
+    except Exception as e:
+        logger.error(f"Authentication error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authentication failed"
+        )
+
+async def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    """Require admin privileges"""
+    if not user.get('is_admin', False):
+        logger.warning(f"Unauthorized admin access attempt by {user.get('email')}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    return user
+
+async def require_management(user: dict = Depends(get_current_user)) -> dict:
+    """Require management privileges (admin or moderator)"""
+    if not user.get('can_manage', False):
+        logger.warning(f"Unauthorized management attempt by {user.get('email')}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Management access required"
+        )
+    return user
 
 def validate_mosquitto_passwd_file(file_path: str) -> tuple[bool, str, list]:
     """
@@ -148,13 +206,15 @@ def update_dynsec_with_passwd_users(usernames: List[str]) -> tuple[bool, str, in
 
 @router.post("/import-password-file")
 async def import_password_file(
+    request: Request,
     file: UploadFile = File(...),
-    api_key: str = Security(get_api_key)
+    user: dict = Depends(require_admin)
 ):
     """
     Import a mosquitto_passwd file and update dynamic security
+    Requires admin privileges
     """
-    logger.info(f"Password file import requested: {file.filename}")
+    logger.info(f"Password file import requested by {user.get('email')}: {file.filename}")
     
     # Create a unique filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -170,7 +230,7 @@ async def import_password_file(
         is_valid, message, users = validate_mosquitto_passwd_file(temp_file_path)
         
         if not is_valid:
-            logger.warning(f"Invalid mosquitto_passwd file: {message}")
+            logger.warning(f"Invalid mosquitto_passwd file upload by {user.get('email')}: {message}")
             return {
                 "success": False, 
                 "message": message,
@@ -216,7 +276,7 @@ async def import_password_file(
         else:
             result_message += f" but failed to update dynamic security: {dynsec_message}"
             
-        logger.info(result_message)
+        logger.info(f"Password file import completed by {user.get('email')}: {result_message}")
         
         return {
             "success": True, 
@@ -233,7 +293,7 @@ async def import_password_file(
         }
     
     except Exception as e:
-        logger.error(f"Error importing password file: {str(e)}")
+        logger.error(f"Error importing password file for {user.get('email')}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to import password file: {str(e)}"
@@ -245,13 +305,15 @@ async def import_password_file(
 
 @router.post("/sync-passwd-to-dynsec")
 async def sync_passwd_to_dynsec(
-    api_key: str = Security(get_api_key)
+    request: Request,
+    user: dict = Depends(require_admin)
 ):
     """
     Sync all users from mosquitto_passwd file to dynamic security
+    Requires admin privileges
     """
     try:
-        logger.info("Syncing mosquitto_passwd users to dynamic security")
+        logger.info(f"Syncing mosquitto_passwd users to dynamic security requested by {user.get('email')}")
         
         # Check if password file exists
         if not os.path.exists(MOSQUITTO_PASSWD_PATH):
@@ -279,6 +341,7 @@ async def sync_passwd_to_dynsec(
         success, message, count = update_dynsec_with_passwd_users(users)
         
         if success:
+            logger.info(f"Sync completed by {user.get('email')}: {message}")
             return {
                 "success": True,
                 "message": message,
@@ -286,13 +349,14 @@ async def sync_passwd_to_dynsec(
                 "users": users[:10] + (["..."] if len(users) > 10 else [])  # Show first 10 users
             }
         else:
+            logger.error(f"Sync failed for {user.get('email')}: {message}")
             return {
                 "success": False,
                 "message": message
             }
     
     except Exception as e:
-        logger.error(f"Error syncing passwd to dynsec: {str(e)}")
+        logger.error(f"Error syncing passwd to dynsec for {user.get('email')}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to sync password file to dynamic security: {str(e)}"
@@ -300,13 +364,15 @@ async def sync_passwd_to_dynsec(
 
 @router.post("/restart-mosquitto")
 async def restart_mosquitto(
-    api_key: str = Security(get_api_key)
+    request: Request,
+    user: dict = Depends(require_admin)
 ):
     """
     Restart the Mosquitto broker service
+    Requires admin privileges
     """
     try:
-        logger.info("Restart Mosquitto broker requested")
+        logger.info(f"Restart Mosquitto broker requested by {user.get('email')}")
         
         # Execute restart command
         restart_script = """#!/bin/bash
@@ -348,19 +414,19 @@ fi
                 text=True,
                 timeout=10  # Set a timeout for the restart process
             )
-            logger.info(f"Restart output: {result.stdout}")
+            logger.info(f"Restart output for {user.get('email')}: {result.stdout}")
             
             if result.returncode == 0:
                 return {"success": True, "message": "Mosquitto broker restarted successfully"}
             else:
-                logger.error(f"Restart stderr: {result.stderr}")
+                logger.error(f"Restart stderr for {user.get('email')}: {result.stderr}")
                 return {"success": False, "message": f"Failed to restart Mosquitto: {result.stderr}"}
                 
         except subprocess.CalledProcessError as e:
-            logger.error(f"Restart failed: {e.stderr}")
+            logger.error(f"Restart failed for {user.get('email')}: {e.stderr}")
             return {"success": False, "message": f"Failed to restart Mosquitto: {e.stderr}"}
         except subprocess.TimeoutExpired:
-            logger.error("Restart timeout expired")
+            logger.error(f"Restart timeout expired for {user.get('email')}")
             return {"success": False, "message": "Timeout while restarting Mosquitto"}
         finally:
             # Clean up script
@@ -368,18 +434,24 @@ fi
                 os.remove(script_path)
     
     except Exception as e:
-        logger.error(f"Error restarting Mosquitto: {str(e)}")
+        logger.error(f"Error restarting Mosquitto for {user.get('email')}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to restart Mosquitto: {str(e)}"
         )
 
 @router.get("/password-file-status")
-async def check_password_file_status(api_key: str = Security(get_api_key)):
+async def check_password_file_status(
+    request: Request,
+    user: dict = Depends(require_management)
+):
     """
     Check if the password file exists and get basic stats
+    Requires management privileges (admin or moderator)
     """
     try:
+        logger.info(f"Password file status check by {user.get('email')}")
+        
         if not os.path.exists(MOSQUITTO_PASSWD_PATH):
             return {
                 "exists": False,
@@ -399,7 +471,7 @@ async def check_password_file_status(api_key: str = Security(get_api_key)):
                     if line.strip():
                         user_count += 1
         except Exception as e:
-            logger.warning(f"Error reading password file: {str(e)}")
+            logger.warning(f"Error reading password file for {user.get('email')}: {str(e)}")
                 
         return {
             "exists": True,
@@ -409,7 +481,7 @@ async def check_password_file_status(api_key: str = Security(get_api_key)):
         }
     
     except Exception as e:
-        logger.error(f"Error checking password file status: {str(e)}")
+        logger.error(f"Error checking password file status for {user.get('email')}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to check password file status: {str(e)}"

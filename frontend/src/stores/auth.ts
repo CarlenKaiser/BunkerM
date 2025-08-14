@@ -14,7 +14,7 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(null);
   const loading = ref(true);
   const error = ref<string | null>(null);
-  const initialized = ref(false); // Declare initialized ref
+  const initialized = ref(false);
 
   // Helper function to handle signed in user
   async function handleSignedInUser(firebaseUser: FirebaseUser) {
@@ -58,8 +58,10 @@ export const useAuthStore = defineStore('auth', () => {
       const unsubscribe = onIdTokenChanged(auth, async (firebaseUser) => {
         try {
           if (firebaseUser) {
+            console.log('Firebase user detected during init:', firebaseUser.email);
             await handleSignedInUser(firebaseUser);
           } else {
+            console.log('No Firebase user detected during init');
             setUser(null, null);
           }
         } catch (err) {
@@ -69,6 +71,7 @@ export const useAuthStore = defineStore('auth', () => {
         } finally {
           if (!initialized.value) {
             initialized.value = true;
+            console.log('Auth store initialized. Authenticated:', isAuthenticated.value);
             resolve();
           }
           loading.value = false;
@@ -87,10 +90,24 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       loading.value = true;
       error.value = null;
-      const firebaseUser = await loginWithMicrosoft();
       
-      // Wait for the auth state to fully update
-      await new Promise(resolve => setTimeout(resolve, 100));
+      console.log('Starting Microsoft login...');
+      const firebaseUser = await loginWithMicrosoft();
+      console.log('Microsoft login completed, Firebase user:', firebaseUser?.email);
+      
+      await new Promise<void>((resolve) => {
+        const checkAuth = () => {
+          if (isAuthenticated.value) {
+            console.log('Authentication state updated successfully');
+            resolve();
+          } else {
+            // Check again in 100ms
+            setTimeout(checkAuth, 100);
+          }
+        };
+        checkAuth();
+      });
+      
       return firebaseUser;
     } catch (err: any) {
       console.error('Microsoft login error:', err);
@@ -122,6 +139,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Set user and token
    */
   function setUser(newUser: User | null, authToken: string | null = null) {
+    console.log('Setting user:', newUser?.email || 'null', 'Token exists:', !!authToken);
     user.value = newUser;
     token.value = authToken;
   }
@@ -144,7 +162,11 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // Computed properties
-  const isAuthenticated = computed(() => !!user.value && !!token.value);
+  const isAuthenticated = computed(() => {
+    const authenticated = !!user.value && !!token.value;
+    console.log('isAuthenticated computed:', authenticated, 'User:', !!user.value, 'Token:', !!token.value);
+    return authenticated;
+  });
   const isAdmin = computed(() => user.value?.role === 'admin');
   const isModerator = computed(() => user.value?.role === 'moderator' || isAdmin.value);
 

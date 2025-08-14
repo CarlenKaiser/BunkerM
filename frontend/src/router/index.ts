@@ -1,22 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router';
+import type { RouteLocationNormalized, NavigationGuardNext } from 'vue-router';
 import MainRoutes from './MainRoutes';
 import AuthRoutes from './AuthRoutes';
 import { useAuthStore } from '@/stores/auth';
 import { useUIStore } from '@/stores/ui';
 
-// Define types inline since vue-router exports might not be available
-interface RouteLocation {
-  path: string;
-  meta?: { requiresAuth?: boolean };
-  [key: string]: any;
-}
-
-interface NavigationGuard {
-  (path?: string): void;
-  (): void;
-}
-
-// Proper module augmentation
+// Proper module augmentation for route meta
 declare module 'vue-router' {
   interface RouteMeta {
     requiresAuth?: boolean;
@@ -35,37 +24,48 @@ const router = createRouter({
   ]
 });
 
+// Combined navigation guard with proper types
 router.beforeEach(async (
-  to: RouteLocation, 
-  from: RouteLocation, 
-  next: NavigationGuard
+  to: RouteLocationNormalized,
+  from: RouteLocationNormalized,
+  next: NavigationGuardNext
 ) => {
   const authStore = useAuthStore();
+  const uiStore = useUIStore();
   
+  // Set loading state
+  uiStore.isLoading = true;
+  
+  // Initialize auth store if not already initialized
   if (!authStore.initialized) {
-    await authStore.init();
+    try {
+      await authStore.init();
+    } catch (error) {
+      console.error('Auth store initialization failed:', error);
+    }
   }
 
+  // Debug logging
+  console.log('Navigation guard:', {
+    to: to.path,
+    authenticated: authStore.isAuthenticated,
+    requiresAuth: to.meta?.requiresAuth
+  });
+
+  // Check if route requires authentication
   if (to.meta?.requiresAuth && !authStore.isAuthenticated) {
+    uiStore.isLoading = false; // Reset loading state
     next('/auth/login');
     return;
   }
   
+  // Redirect authenticated users away from auth pages
   if (to.path.startsWith('/auth') && authStore.isAuthenticated) {
+    uiStore.isLoading = false; // Reset loading state
     next('/dashboard');
     return;
   }
 
-  next();
-});
-
-router.beforeEach((
-  to: RouteLocation, 
-  from: RouteLocation, 
-  next: NavigationGuard
-) => {
-  const uiStore = useUIStore();
-  uiStore.isLoading = true;
   next();
 });
 
