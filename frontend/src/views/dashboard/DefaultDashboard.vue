@@ -32,14 +32,20 @@ interface Stats {
   connection_error?: string
 }
 
-interface FilteredStats {
-  bytes: ByteStats
+type RangeOption = '6hr' | 'daily'
+
+/** Shape UniqueVisitor expects (kept backward-compatible) */
+interface VisitorStatsPayload {
+  fullStats: ByteStats
+  sixHourStats: ByteStats
+}
+
+/** Window totals used solely for trend math */
+interface WindowTotals {
   messages: number
   subs: number
   clients: number
 }
-
-type RangeOption = '6hr' | 'daily'
 
 // =========================
 // Setup
@@ -50,7 +56,7 @@ const API_BASE_URL: string = config.MONITOR_API_URL
 
 // Default stats object
 const defaultStats: Stats = {
-  total_messages_received: "0",
+  total_messages_received: '0',
   total_subscriptions: 0,
   retained_messages: 0,
   total_connected_clients: 0,
@@ -67,23 +73,20 @@ const error = ref<string | null>(null)
 const isLoading = ref<boolean>(false)
 let intervalId: number | null = null
 
-// Trends
+// Trends (shown in WidgetFive)
 const messagesTrend = ref<number>(0)
 const subscriptionsTrend = ref<number>(0)
 const clientsTrend = ref<number>(0)
 
-// Track previous window totals
-const previousWindowStats = ref<{ messages: number; subs: number; clients: number } | null>(null)
+// Track previous totals for the selected window
+const previousWindowTotals = ref<WindowTotals | null>(null)
 
-// Range selection
+// Range selection (driven by WidgetFive via @range-change)
 const selectedRange = ref<RangeOption>('6hr')
 
 // =========================
-// Helper functions
+/* Helpers */
 // =========================
-const parseNumber = (numStr: string): number =>
-  parseFloat(numStr.replace(/,/g, ''))
-
 const calculateTrend = (previous: number, current: number): number => {
   if (previous === 0) return 0
   return Math.round(((current - previous) / previous) * 100)
@@ -92,49 +95,69 @@ const calculateTrend = (previous: number, current: number): number => {
 const sumArray = (arr: number[]): number =>
   arr.reduce((a, b) => a + b, 0)
 
+// Parse timestamps robustly (accepts ISO, ISO w/o Z, and "YYYY-MM-DD HH:mm:ss" as UTC)
+const toDate = (ts: string): Date => {
+  try {
+    if (ts.includes('T')) {
+      // ISO-like. Ensure Z if missing timezone and seconds present.
+      return ts.endsWith('Z') || ts.includes('+') || (ts.match(/:/g) || []).length > 2
+        ? new Date(ts)
+        : new Date(ts + 'Z')
+    }
+    // Non-ISO: treat as UTC
+    return new Date(ts + ' UTC')
+  } catch {
+    return new Date('invalid')
+  }
+}
+
 // =========================
-// Computed: filtered stats based on selected range
+// Computed: visitor stats payload (keeps UniqueVisitor working)
 // =========================
-const filteredStats: ComputedRef<FilteredStats> = computed((): FilteredStats => {
+const visitorStats: ComputedRef<VisitorStatsPayload> = computed((): VisitorStatsPayload => {
   const byteStats: ByteStats = stats.value.bytes_stats
-  const messageStats: DailyMessageStats = stats.value.daily_message_stats
 
-  if (selectedRange.value === '6hr') {
-    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000)
-    const sixHourBytes: ByteStats = { timestamps: [], bytes_received: [], bytes_sent: [] }
+  // Always provide fullStats (raw, as received)
+  const fullStats: ByteStats = byteStats ?? { timestamps: [], bytes_received: [], bytes_sent: [] }
 
-    byteStats.timestamps.forEach((ts: string, i: number) => {
-      let timestampDate: Date
-      try {
-        if (ts.includes('T')) {
-          timestampDate = ts.endsWith('Z') || ts.includes('+') || (ts.match(/:/g) || []).length > 2
-            ? new Date(ts)
-            : new Date(ts + 'Z')
-        } else {
-          timestampDate = new Date(ts + ' UTC')
+  // Compute six-hour slice (used by 6hr selection and as a safe default)
+  const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000)
+  const sixHourStats: ByteStats = { timestamps: [], bytes_received: [], bytes_sent: [] }
+
+  if (fullStats.timestamps?.length) {
+    fullStats.timestamps.forEach((ts: string, i: number) => {
+      const d = toDate(ts)
+      if (!isNaN(d.getTime()) && d >= sixHoursAgo) {
+        if (i < fullStats.bytes_received.length && i < fullStats.bytes_sent.length) {
+          sixHourStats.timestamps.push(ts)
+          sixHourStats.bytes_received.push(fullStats.bytes_received[i])
+          sixHourStats.bytes_sent.push(fullStats.bytes_sent[i])
         }
-
-        if (!isNaN(timestampDate.getTime()) && timestampDate >= sixHoursAgo) {
-          sixHourBytes.timestamps.push(ts)
-          sixHourBytes.bytes_received.push(byteStats.bytes_received[i])
-          sixHourBytes.bytes_sent.push(byteStats.bytes_sent[i])
-        }
-      } catch {
-        // Ignore bad timestamps
       }
     })
+  }
 
+  return { fullStats, sixHourStats }
+})
+
+// =========================
+// Computed: window totals used for trend math
+// - Messages: uses selectedRange
+//   * '6hr'  -> sum(bytes_received) from sixHourStats
+//   * 'daily'-> sum(daily_message_stats.counts)
+// - Subs/Clients: snapshot totals (we don't have historical arrays for these)
+// =========================
+const windowTotals: ComputedRef<WindowTotals> = computed((): WindowTotals => {
+  if (selectedRange.value === '6hr') {
+    const msgs = sumArray(visitorStats.value.sixHourStats.bytes_received)
     return {
-      bytes: sixHourBytes,
-      messages: sumArray(sixHourBytes.bytes_received), // Using bytes as proxy for message count
+      messages: msgs,
       subs: stats.value.total_subscriptions,
       clients: stats.value.total_connected_clients
     }
   } else {
-    // Daily
-    const dailyTotal = sumArray(messageStats.counts)
+    const dailyTotal = sumArray(stats.value.daily_message_stats.counts)
     return {
-      bytes: byteStats,
       messages: dailyTotal,
       subs: stats.value.total_subscriptions,
       clients: stats.value.total_connected_clients
@@ -143,15 +166,24 @@ const filteredStats: ComputedRef<FilteredStats> = computed((): FilteredStats => 
 })
 
 // =========================
-// Watch: recalc trends when filtered stats change
+/* Watch: recalc trends whenever selected window data changes */
 // =========================
-watch(filteredStats, (curr: FilteredStats) => {
-  if (previousWindowStats.value) {
-    messagesTrend.value = calculateTrend(previousWindowStats.value.messages, curr.messages)
-    subscriptionsTrend.value = calculateTrend(previousWindowStats.value.subs, curr.subs)
-    clientsTrend.value = calculateTrend(previousWindowStats.value.clients, curr.clients)
+watch(windowTotals, (curr: WindowTotals) => {
+  if (previousWindowTotals.value) {
+    messagesTrend.value = calculateTrend(previousWindowTotals.value.messages, curr.messages)
+    subscriptionsTrend.value = calculateTrend(previousWindowTotals.value.subs, curr.subs)
+    clientsTrend.value = calculateTrend(previousWindowTotals.value.clients, curr.clients)
   }
-  previousWindowStats.value = { ...curr }
+  previousWindowTotals.value = { ...curr }
+})
+
+// If the range changes, we want to reset the baseline so the
+// next calculation compares within the new window, not across windows.
+watch(selectedRange, () => {
+  previousWindowTotals.value = null
+  messagesTrend.value = 0
+  subscriptionsTrend.value = 0
+  clientsTrend.value = 0
 })
 
 // =========================
@@ -191,10 +223,16 @@ const fetchStats = async (): Promise<void> => {
     }
 
     const data: Stats = await response.json()
-    stats.value = { ...defaultStats, ...data, mqtt_connected: data.mqtt_connected || false }
+    const merged: Stats = {
+      ...defaultStats,
+      ...data,
+      mqtt_connected: data.mqtt_connected ?? false
+    }
 
-    if (!data.mqtt_connected && data.connection_error) {
-      error.value = data.connection_error
+    stats.value = merged
+
+    if (!merged.mqtt_connected && merged.connection_error) {
+      error.value = merged.connection_error
     }
   } catch (err: unknown) {
     error.value = err instanceof Error ? err.message : 'Failed to load dashboard data'
@@ -258,13 +296,14 @@ onUnmounted((): void => {
       :messages-trend="messagesTrend"
       :subscriptions-trend="subscriptionsTrend"
       :clients-trend="clientsTrend"
-      @range-change="(range: RangeOption) => selectedRange.value = range"
+      @range-change="(range: RangeOption) => { selectedRange.value = range }"
     />
 
     <v-row>
       <!-- Message Rates Chart -->
       <v-col cols="12">
-        <UniqueVisitor :stats="filteredStats.bytes" />
+        <!-- Keep UniqueVisitor prop shape intact -->
+        <UniqueVisitor :stats="visitorStats" />
       </v-col>
     </v-row>
   </div>
@@ -288,5 +327,7 @@ onUnmounted((): void => {
   left: 0;
   right: 0;
   z-index: 100;
+  margin: 0;
+  padding: 0;
 }
 </style>
