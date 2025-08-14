@@ -14,146 +14,99 @@ const getCurrentTimestamp = () => Math.floor(Date.now() / 1000);
 
 export const groupService = {
   async getGroups() {
-    const timestamp = getCurrentTimestamp();
-    const nonce = generateNonce();
-    
-    const response = await api.get('/groups', {
-      params: {
-        nonce,
-        timestamp
+    try {
+      const response = await api.get('/api/v1/groups');
+      
+      // Handle both array and string response formats
+      let groupsList;
+      if (Array.isArray(response.data.groups)) {
+        groupsList = response.data.groups;
+      } else if (typeof response.data.groups === 'string') {
+        groupsList = response.data.groups.split('\n').filter(Boolean);
+      } else {
+        console.warn('Unexpected groups data format:', response.data.groups);
+        return [];
       }
-    });
-    return response.data.groups.split('\n').filter(Boolean).map(name => ({ name }));
-  },
-
-  async getGroups() {
-    const timestamp = getCurrentTimestamp();
-    const nonce = generateNonce();
-    
-    const response = await api.get('/groups', {
-      params: {
-        nonce,
-        timestamp
-      }
-    });
-    
-    // If the API returns an array directly
-    const groups = response.data || [];
-    return Array.isArray(groups) 
-      ? groups.map(group => typeof group === 'string' ? { name: group } : group)
-      : [];
+      
+      return groupsList.map(name => ({ name }));
+    } catch (error) {
+      console.error('Error fetching groups:', error);
+      return [];
+    }
   },
 
   async createGroup(name) {
-    const timestamp = getCurrentTimestamp();
-    const nonce = generateNonce();
-    
-    const response = await api.post('/groups', 
-      { name },
-      {
-        params: {
-          nonce,
-          timestamp
-        }
-      }
-    );
-    return response.data;
+    try {
+      const response = await api.post('/api/v1/groups', { name });
+      return response.data;
+    } catch (error) {
+      console.error('Error creating group:', error);
+      throw error;
+    }
   },
 
   async deleteGroup(name) {
-    const timestamp = getCurrentTimestamp();
-    const nonce = generateNonce();
-    
-    const response = await api.delete(`/groups/${name}`, {
-      params: {
-        nonce,
-        timestamp
-      }
-    });
-    return response.data;
+    try {
+      const response = await api.delete(`/api/v1/groups/${name}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error deleting group:', error);
+      throw error;
+    }
   },
 
   async addRoleToGroup(groupName, roleName) {
-    const timestamp = getCurrentTimestamp();
-    const nonce = generateNonce();
-    
-    const response = await api.post(
-      `/groups/${groupName}/roles`,
-      { role_name: roleName },
-      {
-        params: {
-          nonce,
-          timestamp
-        }
-      }
-    );
-    return response.data;
+    try {
+      const response = await api.post(
+        `/api/v1/groups/${groupName}/roles`,
+        { role_name: roleName }
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Error adding role to group:', error);
+      throw error;
+    }
   },
 
   async addClientToGroup(groupName, username, priority = null) {
-    const timestamp = getCurrentTimestamp();
-    const nonce = generateNonce();
-    
-    // Validate inputs
-    if (!groupName || !username) {
-      throw new Error('Group name and username are required');
-    }
-  
-    const data = { username };
-    if (priority !== null && !isNaN(priority)) {
-      data.priority = priority;
-    }
-  
-    // Debug log
-    console.log('Adding client to group:', {
-      endpoint: `/groups/${groupName}/clients`,
-      data,
-      params: { nonce, timestamp }
-    });
-  
-    const response = await api.post(
-      `/groups/${groupName}/clients`,
-      data,
-      {
-        params: {
-          nonce,
-          timestamp
-        }
+    try {
+      const data = { username };
+      if (priority !== null) {
+        data.priority = priority;
       }
-    );
-  
-    return response.data;
+      
+      const response = await api.post(
+        `/api/v1/groups/${groupName}/clients`,
+        data
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Error adding client to group:', error);
+      throw error;
+    }
   },
   
   async removeClientFromGroup(groupName, username) {
-    const timestamp = getCurrentTimestamp();
-    const nonce = generateNonce();
-    
-    const response = await api.delete(
-      `/groups/${groupName}/clients/${username}`,
-      {
-        params: {
-          nonce,
-          timestamp
-        }
-      }
-    );
-    return response.data;
+    try {
+      const response = await api.delete(
+        `/api/v1/groups/${groupName}/clients/${username}`
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Error removing client from group:', error);
+      throw error;
+    }
   },
 
   async removeRoleFromGroup(groupName, roleName) {
-    const timestamp = getCurrentTimestamp();
-    const nonce = generateNonce();
-    
-    const response = await api.delete(
-      `/groups/${groupName}/roles/${roleName}`,
-      {
-        params: {
-          nonce,
-          timestamp
-        }
-      }
-    );
-    return response.data;
+    try {
+      const response = await api.delete(
+        `/api/v1/groups/${groupName}/roles/${roleName}`
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Error removing role from group:', error);
+      throw error;
+    }
   }
 };
