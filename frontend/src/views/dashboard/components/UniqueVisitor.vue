@@ -15,15 +15,27 @@ interface ByteStats {
   bytes_sent: number[];
 }
 
+interface VisitorStats {
+  fullStats: ByteStats;
+  sixHourStats: ByteStats;
+}
+
 interface Props {
-  byteStats: ByteStats;
+  stats: VisitorStats;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  byteStats: () => ({
-    timestamps: [],
-    bytes_received: [],
-    bytes_sent: []
+  stats: () => ({
+    fullStats: {
+      timestamps: [],
+      bytes_received: [],
+      bytes_sent: []
+    },
+    sixHourStats: {
+      timestamps: [],
+      bytes_received: [],
+      bytes_sent: []
+    }
   })
 });
 
@@ -63,8 +75,8 @@ const formatDate = (timestamp: string): string => {
   }
 };
 
-// Helper function to filter data points by time range
-const filterDataByTimeRange = (data: ByteStats, hours: number) => {
+// Helper function to filter data points by time range for daily view
+const filterDataByTimeRange = (data: ByteStats, hours: number): ByteStats => {
   const cutoffTime = new Date();
   cutoffTime.setHours(cutoffTime.getHours() - hours);
 
@@ -80,17 +92,17 @@ const filterDataByTimeRange = (data: ByteStats, hours: number) => {
   };
 };
 
-
 // Helper function to filter timestamps for x-axis labels (15-minute intervals)
-const filterTimestampsForLastSixHours = (timestamps: string[]): string[] => {
-  const times = timestamps.map(ts => new Date(ts).getTime());
+const filterTimestampsForDisplay = (timestamps: string[], intervalMinutes: number = 15): string[] => {
+  if (timestamps.length === 0) return [];
+  
   const filtered: string[] = [];
-  const FIFTEEN_MINUTES = 15 * 60 * 1000;
-
+  const intervalMs = intervalMinutes * 60 * 1000;
   let lastTimestamp = 0;
+
   timestamps.forEach((ts, index) => {
-    const currentTime = times[index];
-    if (index === 0 || (currentTime - lastTimestamp) >= FIFTEEN_MINUTES) {
+    const currentTime = new Date(ts).getTime();
+    if (index === 0 || (currentTime - lastTimestamp) >= intervalMs) {
       filtered.push(ts);
       lastTimestamp = currentTime;
     } else {
@@ -103,6 +115,8 @@ const filterTimestampsForLastSixHours = (timestamps: string[]): string[] => {
 
 // Helper function to filter timestamps for daily view
 const filterTimestampsForDaily = (timestamps: string[]): string[] => {
+  if (timestamps.length === 0) return [];
+  
   const filtered: string[] = [];
   let lastDate = '';
 
@@ -121,8 +135,9 @@ const filterTimestampsForDaily = (timestamps: string[]): string[] => {
 
 // Last 6 hours view chart options
 const chartOptions1 = computed(() => {
-  const sixHourData = filterDataByTimeRange(props.byteStats, 6);
-  const filteredTimestamps = filterTimestampsForLastSixHours(sixHourData.timestamps);
+  const sixHourData = props.stats.sixHourStats;
+  const filteredTimestamps = filterTimestampsForDisplay(sixHourData.timestamps, 15);
+  
   return {
     chart: {
       type: 'area',
@@ -157,7 +172,7 @@ const chartOptions1 = computed(() => {
       }
     },
     xaxis: {
-      categories: filteredTimestamps.map(formatTime),
+      categories: filteredTimestamps.map(ts => ts ? formatTime(ts) : ''),
       axisBorder: {
         show: true,
         color: getLightBorder.value
@@ -175,7 +190,7 @@ const chartOptions1 = computed(() => {
           return value || '';  // Hide empty labels
         }
       },
-      tickAmount: 8
+      tickAmount: Math.min(8, filteredTimestamps.filter(ts => ts).length)
     },
     yaxis: {
       labels: {
@@ -197,14 +212,15 @@ const chartOptions1 = computed(() => {
 
 // Daily view chart options
 const chartOptions2 = computed(() => {
-  const sevenDayData = filterDataByTimeRange(props.byteStats, 24 * 7);
+  const sevenDayData = filterDataByTimeRange(props.stats.fullStats, 24 * 7);
   const filteredTimestamps = filterTimestampsForDaily(sevenDayData.timestamps);
+  
   return {
     chart: {
       type: 'area',
       height: 450,
       fontFamily: `inherit`,
-      foreColor: '#a1aab2',
+      foreColor: getSecondary.value,
       toolbar: false
     },
     colors: [getInfo.value, getdarkPrimary.value],
@@ -233,7 +249,7 @@ const chartOptions2 = computed(() => {
       }
     },
     xaxis: {
-      categories: filteredTimestamps.map(formatDate),
+      categories: filteredTimestamps.map(ts => ts ? formatDate(ts) : ''),
       axisBorder: {
         show: true,
         color: getLightBorder.value
@@ -271,33 +287,32 @@ const chartOptions2 = computed(() => {
   };
 });
 
-// Chart series data for both views
-const dailySeriesData = computed(() => {
-  // Filter last 6 hours of data
-  const sixHourData = filterDataByTimeRange(props.byteStats, 6);
+// Chart series data for 6-hour view
+const sixHourSeriesData = computed(() => {
+  const sixHourData = props.stats.sixHourStats;
   return [
     {
       name: 'Bytes Received',
-      data: sixHourData.bytes_received
+      data: sixHourData.bytes_received || []
     },
     {
       name: 'Bytes Sent',
-      data: sixHourData.bytes_sent
+      data: sixHourData.bytes_sent || []
     }
   ];
 });
 
-const weeklySeriesData = computed(() => {
-  // Filter last 7 days of data
-  const sevenDayData = filterDataByTimeRange(props.byteStats, 24 * 7);
+// Chart series data for daily view
+const dailySeriesData = computed(() => {
+  const sevenDayData = filterDataByTimeRange(props.stats.fullStats, 24 * 7);
   return [
     {
       name: 'Bytes Received',
-      data: sevenDayData.bytes_received
+      data: sevenDayData.bytes_received || []
     },
     {
       name: 'Bytes Sent',
-      data: sevenDayData.bytes_sent
+      data: sevenDayData.bytes_sent || []
     }
   ];
 });
@@ -321,10 +336,10 @@ const tab = ref('one');
     <v-card-text class="rounded-md overflow-hidden">
       <v-window v-model="tab">
         <v-window-item value="one">
-          <apexchart type="area" height="450" :options="chartOptions1" :series="dailySeriesData" />
+          <apexchart type="area" height="450" :options="chartOptions1" :series="sixHourSeriesData" />
         </v-window-item>
         <v-window-item value="two">
-          <apexchart type="area" height="450" :options="chartOptions2" :series="weeklySeriesData" />
+          <apexchart type="area" height="450" :options="chartOptions2" :series="dailySeriesData" />
         </v-window-item>
       </v-window>
     </v-card-text>

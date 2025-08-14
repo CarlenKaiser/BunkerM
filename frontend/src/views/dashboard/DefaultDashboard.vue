@@ -35,10 +35,9 @@ interface Stats {
   connection_error?: string
 }
 
-interface FilteredByteStats {
-  timestamps: string[]
-  bytes_received: number[]
-  bytes_sent: number[]
+interface VisitorStats {
+  fullStats: ByteStats
+  sixHourStats: ByteStats
 }
 
 const defaultStats: Stats = {
@@ -63,49 +62,33 @@ const error = ref<string | null>(null)
 const isLoading = ref(false)
 let intervalId: number | null = null
 
-// Fixed computed property declaration
-const processedByteStats = computed(() => {
+const visitorStats = computed(() => {
   const byteStats = stats.value.bytes_stats
+  const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000)
   
-  const defaultReturn: FilteredByteStats = {
+  const sixHourStats: ByteStats = {
     timestamps: [],
     bytes_received: [],
     bytes_sent: []
   }
 
-  if (!byteStats || 
-      !byteStats.timestamps || 
-      !byteStats.bytes_received || 
-      !byteStats.bytes_sent ||
-      byteStats.timestamps.length === 0) {
-    return defaultReturn
-  }
-
-  const now = new Date()
-  const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000)
-
-  const filteredData: FilteredByteStats = {
-    timestamps: [],
-    bytes_received: [],
-    bytes_sent: []
-  }
-
-  byteStats.timestamps.forEach((timestamp: string, index: number) => {
-    try {
-      const date = new Date(timestamp)
-      if (date >= sixHoursAgo && 
-          index < byteStats.bytes_received.length && 
-          index < byteStats.bytes_sent.length) {
-        filteredData.timestamps.push(timestamp)
-        filteredData.bytes_received.push(byteStats.bytes_received[index])
-        filteredData.bytes_sent.push(byteStats.bytes_sent[index])
+  if (byteStats.timestamps?.length) {
+    byteStats.timestamps.forEach((ts: string, i: number) => {
+      const timestampDate = new Date(ts)
+      if (timestampDate >= sixHoursAgo && 
+          i < byteStats.bytes_received.length && 
+          i < byteStats.bytes_sent.length) {
+        sixHourStats.timestamps.push(ts)
+        sixHourStats.bytes_received.push(byteStats.bytes_received[i])
+        sixHourStats.bytes_sent.push(byteStats.bytes_sent[i])
       }
-    } catch (e) {
-      console.warn('Error processing timestamp at index', index, e)
-    }
-  })
+    })
+  }
 
-  return filteredData
+  return {
+    fullStats: byteStats,
+    sixHourStats
+  }
 })
 
 const fetchStats = async () => {
@@ -230,7 +213,7 @@ onUnmounted(() => {
       <!-- Message Rates Chart -->
       <v-col cols="12">
         <UniqueVisitor 
-          :byte-stats="processedByteStats" 
+          :stats="visitorStats" 
         />
       </v-col>
     </v-row>

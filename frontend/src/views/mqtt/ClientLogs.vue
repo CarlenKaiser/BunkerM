@@ -12,12 +12,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and  
 limitations under the License. -->
 
-
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import UiTitleCard from '@/components/shared/UiTitleCard.vue';
 import axios from 'axios';
 import { getRuntimeConfig } from '@/config/runtime';
+import { getAuth } from 'firebase/auth';
 
 import {
     CheckCircleOutlined,
@@ -46,14 +46,28 @@ const snackbarText = ref('');
 const snackbarColor = ref('');
 const loading = ref(false);
 
-// Create an axios instance with the proper configuration
+// Firebase auth instance
+const auth = getAuth();
+
+// Create an axios instance with Firebase auth token
 const config = getRuntimeConfig();
 const api = axios.create({
   baseURL: config.EVENT_API_URL || import.meta.env.VITE_EVENT_API_URL,
   headers: {
-    'Content-Type': 'application/json',
-    'X-API-Key': import.meta.env.VITE_API_KEY
+    'Content-Type': 'application/json'
   }
+});
+
+// Add request interceptor to include Firebase ID token
+api.interceptors.request.use(async (config) => {
+  const user = auth.currentUser;
+  if (user) {
+    const token = await user.getIdToken();
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+}, (error) => {
+  return Promise.reject(error);
 });
 
 const headers = [
@@ -71,19 +85,16 @@ const filteredEvents = computed(() => {
   return events.value.filter((event: MQTTEvent) => event.username !== 'bunker');
 });
 
-
 const showNotification = (message: string, color: string = 'success') => {
   snackbarText.value = message;
   snackbarColor.value = color;
   snackbar.value = true;
 };
 
-// Format timestamp to readable format
 const formatTimestamp = (timestamp: string): string => {
   return new Date(timestamp).toLocaleString();
 };
 
-// Fetch events from the API
 const fetchEvents = async () => {
   loading.value = true;
   try {
@@ -109,7 +120,7 @@ const enableClient = async (username: string) => {
   }
 };
 
-const DisableClient = async (username: string) => {
+const disableClient = async (username: string) => {
   try {
     const encodedUsername = encodeURIComponent(username);
     await api.post(`/disable/${encodedUsername}`);
@@ -121,7 +132,6 @@ const DisableClient = async (username: string) => {
   }
 };
 
-// Set up polling for updates
 onMounted(() => {
   fetchEvents();
   setInterval(fetchEvents, 5000); // Poll every 5 seconds
@@ -179,7 +189,7 @@ onMounted(() => {
           v-if="item.status === 'success'"
           color="error"
           size="small"
-          @click="DisableClient(item.username)"
+          @click="disableClient(item.username)"
         >
           Disable
         </v-btn>
