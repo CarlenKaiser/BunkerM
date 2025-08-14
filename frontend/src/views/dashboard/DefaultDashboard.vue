@@ -1,7 +1,7 @@
 <!-- Copyright (c) 2025 BunkerM -->
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import WidgetFive from './components/WidgetFive.vue';
 import UniqueVisitor from './components/UniqueVisitor.vue';
 import { generateNonce } from '../../utils/security';
@@ -55,6 +55,42 @@ const stats = ref<Stats>({ ...defaultStats });
 const error = ref<string | null>(null);
 const isLoading = ref(false);
 let intervalId: number | null = null;
+
+// Process the byte stats to ensure proper formatting for the last 6 hours view
+const processedByteStats = computed(() => {
+  const byteStats = stats.value.bytes_stats;
+  
+  // If no data, return empty structure
+  if (byteStats.timestamps.length === 0) {
+    return {
+      timestamps: [],
+      bytes_received: [],
+      bytes_sent: []
+    };
+  }
+
+  // Get current time and calculate 6 hours ago
+  const now = new Date();
+  const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+
+  // Filter data to only include last 6 hours
+  const filteredData = {
+    timestamps: [] as string[],
+    bytes_received: [] as number[],
+    bytes_sent: [] as number[]
+  };
+
+  byteStats.timestamps.forEach((timestamp: string, index: number) => {
+    const date = new Date(timestamp);
+    if (date >= sixHoursAgo) {
+      filteredData.timestamps.push(timestamp);
+      filteredData.bytes_received.push(byteStats.bytes_received[index]);
+      filteredData.bytes_sent.push(byteStats.bytes_sent[index]);
+    }
+  });
+
+  return filteredData;
+});
 
 const fetchStats = async () => {
   isLoading.value = true;
@@ -157,7 +193,7 @@ onUnmounted(() => {
       {{ error }}
     </v-alert>
 
-    <!-- Loading indicator - matches original behavior -->
+    <!-- Loading indicator -->
     <v-progress-linear
       v-if="isLoading"
       indeterminate
@@ -178,7 +214,7 @@ onUnmounted(() => {
       <!-- Message Rates Chart -->
       <v-col cols="12">
         <UniqueVisitor 
-          :byte-stats="stats.bytes_stats" 
+          :byte-stats="processedByteStats" 
         />
       </v-col>
     </v-row>
