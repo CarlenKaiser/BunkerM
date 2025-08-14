@@ -88,6 +88,9 @@ export const useAuthStore = defineStore('auth', () => {
       loading.value = true;
       error.value = null;
       const firebaseUser = await loginWithMicrosoft();
+      
+      // Wait for the auth state to fully update
+      await new Promise(resolve => setTimeout(resolve, 100));
       return firebaseUser;
     } catch (err: any) {
       console.error('Microsoft login error:', err);
@@ -105,6 +108,9 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       error.value = null;
       await logoutUser();
+      // Clear local storage and reset state
+      localStorage.removeItem('firebaseToken');
+      setUser(null, null);
     } catch (err: any) {
       console.error('Logout error:', err);
       error.value = err.message || 'Failed to logout';
