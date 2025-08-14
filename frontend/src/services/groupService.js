@@ -39,6 +39,7 @@ export const groupService = {
     
     // If the API returns an array directly
     const groups = response.data || [];
+    console.log("Groups found: ",groups);
     return Array.isArray(groups) 
       ? groups.map(group => typeof group === 'string' ? { name: group } : group)
       : [];
