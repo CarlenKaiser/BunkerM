@@ -62,19 +62,6 @@ const formatTime = (timestamp: string): string => {
   }
 };
 
-// Helper function to format date for display
-const formatDate = (timestamp: string): string => {
-  try {
-    const date = new Date(timestamp);
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: '2-digit'
-    });
-  } catch (e) {
-    return timestamp;
-  }
-};
-
 // Helper function to filter data points by time range for daily view
 const filterDataByTimeRange = (data: ByteStats, hours: number): ByteStats => {
   const cutoffTime = new Date();
@@ -105,26 +92,6 @@ const filterTimestampsForDisplay = (timestamps: string[], intervalMinutes: numbe
     if (index === 0 || (currentTime - lastTimestamp) >= intervalMs) {
       filtered.push(ts);
       lastTimestamp = currentTime;
-    } else {
-      filtered.push('');
-    }
-  });
-
-  return filtered;
-};
-
-// Helper function to filter timestamps for daily view
-const filterTimestampsForDaily = (timestamps: string[]): string[] => {
-  if (timestamps.length === 0) return [];
-  
-  const filtered: string[] = [];
-  let lastDate = '';
-
-  timestamps.forEach(ts => {
-    const currentDate = formatDate(ts);
-    if (currentDate !== lastDate) {
-      filtered.push(ts);
-      lastDate = currentDate;
     } else {
       filtered.push('');
     }
@@ -212,8 +179,8 @@ const chartOptions1 = computed(() => {
 
 // Daily view chart options
 const chartOptions2 = computed(() => {
-  const sevenDayData = filterDataByTimeRange(props.stats.fullStats, 24 * 7);
-  const filteredTimestamps = filterTimestampsForDaily(sevenDayData.timestamps);
+  const oneDayData = filterDataByTimeRange(props.stats.fullStats, 24); // Changed from 24 * 7 to 24
+  const filteredTimestamps = filterTimestampsForDisplay(oneDayData.timestamps, 60); // Show hourly intervals for 24h view
   
   return {
     chart: {
@@ -249,7 +216,7 @@ const chartOptions2 = computed(() => {
       }
     },
     xaxis: {
-      categories: filteredTimestamps.map(ts => ts ? formatDate(ts) : ''),
+      categories: filteredTimestamps.map(ts => ts ? formatTime(ts) : ''), // Use time format for 24h view
       axisBorder: {
         show: true,
         color: getLightBorder.value
@@ -267,7 +234,7 @@ const chartOptions2 = computed(() => {
           return value || '';  // Hide empty labels
         }
       },
-      tickAmount: 7
+      tickAmount: Math.min(12, filteredTimestamps.filter(ts => ts).length) // Show up to 12 ticks for hourly view
     },
     yaxis: {
       labels: {
@@ -287,7 +254,6 @@ const chartOptions2 = computed(() => {
   };
 });
 
-// Chart series data for 6-hour view
 const sixHourSeriesData = computed(() => {
   const sixHourData = props.stats.sixHourStats;
   return [
@@ -302,17 +268,16 @@ const sixHourSeriesData = computed(() => {
   ];
 });
 
-// Chart series data for daily view
 const dailySeriesData = computed(() => {
-  const sevenDayData = filterDataByTimeRange(props.stats.fullStats, 24 * 7);
+  const oneDayData = filterDataByTimeRange(props.stats.fullStats, 24); // Changed from 24 * 7 to 24
   return [
     {
       name: 'Bytes Received',
-      data: sevenDayData.bytes_received || []
+      data: oneDayData.bytes_received || []
     },
     {
       name: 'Bytes Sent',
-      data: sevenDayData.bytes_sent || []
+      data: oneDayData.bytes_sent || []
     }
   ];
 });

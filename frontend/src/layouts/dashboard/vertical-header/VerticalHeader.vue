@@ -24,18 +24,29 @@ const authStore = useAuthStore();
 const router = useRouter();
 
 // Get current user information from auth store
-const currentUser = computed(() => authStore.user);
+const currentUser = computed(() => {
+  const user = authStore.user;
+  console.log('Current user object:', user);
+  return user;
+});
+
 const userDisplayName = computed(() => {
   if (!currentUser.value) return '';
   // Build display name from firstName and lastName
   const fullName = [currentUser.value.firstName, currentUser.value.lastName]
     .filter(Boolean)
     .join(' ');
+  console.log('User display name:', fullName, 'firstName:', currentUser.value.firstName, 'lastName:', currentUser.value.lastName);
   return fullName || 
          currentUser.value.email?.split('@')[0] || 
          'User';
 });
-const userPhotoURL = computed(() => currentUser.value?.photoURL || '');
+
+const userPhotoURL = computed(() => {
+  const photoURL = currentUser.value?.photoURL || '';
+  console.log('User photo URL:', photoURL);
+  return photoURL;
+});
 
 //  logout handler
 const handleLogout = async () => {
