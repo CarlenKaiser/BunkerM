@@ -133,7 +133,21 @@ export const mqttService = {
   async getRoles() {
     const response = await api.get('/roles');
     console.log("Roles Found: ", response.data.roles);
-    return response.data.roles.split('\n').filter(Boolean).map(name => ({ name }));
+    
+    // Handle both array and string cases
+    let rolesList;
+    if (Array.isArray(response.data.roles)) {
+      // If it's already an array, just map to the desired format
+      rolesList = response.data.roles.map(name => ({ name }));
+    } else if (typeof response.data.roles === 'string') {
+      // Legacy format - split by newlines
+      rolesList = response.data.roles.split('\n').filter(Boolean).map(name => ({ name }));
+    } else {
+      console.warn('Unexpected roles data format:', response.data.roles);
+      return [];
+    }
+    
+    return rolesList;
   },
 
   async getRole(name) {

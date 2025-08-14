@@ -66,14 +66,14 @@ const userInitials = computed(() => {
 
 // Generate a consistent color based on user's name
 const avatarColor = computed(() => {
+  // Use more visible colors
   const colors = [
-    'primary', 'secondary', 'success', 'info', 'warning', 'error',
-    'purple', 'indigo', 'cyan', 'teal', 'green', 'orange'
+    'primary', 'error', 'purple', 'indigo', 'teal', 'orange',
+    'blue', 'red', 'green', 'deep-purple', 'cyan', 'amber'
   ];
   
-  // Simple hash function to get consistent color for each user
-  let hash = 0;
   const str = userDisplayName.value || 'User';
+  let hash = 0;
   for (let i = 0; i < str.length; i++) {
     hash = str.charCodeAt(i) + ((hash << 5) - hash);
   }
@@ -166,9 +166,8 @@ const handleLogout = async () => {
         size="36" 
         class="mr-2" 
         :color="avatarColor"
-        style="border: 2px solid red; background-color: blue !important;"
       >
-        <span class="text-white font-weight-bold text-body-1" style="font-size: 16px;">
+        <span class="text-white font-weight-bold">
           {{ userInitials }}
         </span>
       </v-avatar>
@@ -196,5 +195,15 @@ const handleLogout = async () => {
 <style scoped>
 .profileBtn {
   min-width: auto;
+}
+
+/* Ensure avatar visibility */
+.v-avatar {
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.1) !important;
+}
+
+.v-avatar span {
+  font-size: 14px !important;
+  text-shadow: 0 0 1px rgba(0,0,0,0.3);
 }
 </style>
