@@ -61,34 +61,42 @@ const fetchLogs = async () => {
     }
     const data = await response.json();
     
-    // Process log entries
-    logs.value = data.logs.map((log: string | LogData, index: number): LogEntry => {
-      // Extract timestamp and level from the log entry
-      const timestampMatch = typeof log === 'string' ? log.match(/^(\d+):/) : null;
-      const levelMatch = typeof log === 'string' ? log.match(/\[(INFO|WARNING|ERROR|DEBUG)\]/i) : null;
-      
-      // If log is a string (old format), parse it. Otherwise, use the new format
-      if (typeof log === 'string') {
-        const messageWithoutTimestamp = timestampMatch 
-          ? log.replace(/^\d+:\s*/, '') 
-          : log;
+    // Process log entries and sort by timestamp (newest first)
+    logs.value = data.logs
+      .map((log: string | LogData, index: number): LogEntry => {
+        // Extract timestamp and level from the log entry
+        const timestampMatch = typeof log === 'string' ? log.match(/^(\d+):/) : null;
+        const levelMatch = typeof log === 'string' ? log.match(/\[(INFO|WARNING|ERROR|DEBUG)\]/i) : null;
         
-        return {
-          id: index,
-          timestamp: timestampMatch ? parseInt(timestampMatch[1], 10) * 1000 : null,
-          level: levelMatch ? levelMatch[1].toUpperCase() : 'INFO',
-          message: messageWithoutTimestamp
-        };
-      } else {
-        // New format where log is an object
-        return {
-          id: index,
-          timestamp: log.timestamp ? new Date(log.timestamp).getTime() : null,
-          level: log.level || 'INFO',
-          message: log.message || ''
-        };
-      }
-    });
+        // If log is a string (old format), parse it. Otherwise, use the new format
+        if (typeof log === 'string') {
+          const messageWithoutTimestamp = timestampMatch 
+            ? log.replace(/^\d+:\s*/, '') 
+            : log;
+          
+          return {
+            id: index,
+            timestamp: timestampMatch ? parseInt(timestampMatch[1], 10) * 1000 : null,
+            level: levelMatch ? levelMatch[1].toUpperCase() : 'INFO',
+            message: messageWithoutTimestamp
+          };
+        } else {
+          // New format where log is an object
+          return {
+            id: index,
+            timestamp: log.timestamp ? new Date(log.timestamp).getTime() : null,
+            level: log.level || 'INFO',
+            message: log.message || ''
+          };
+        }
+      })
+      // Sort by timestamp in descending order (newest first)
+      .sort((a: LogEntry, b: LogEntry) => {
+        // Handle cases where timestamp might be null
+        const timeA = a.timestamp || 0;
+        const timeB = b.timestamp || 0;
+        return timeB - timeA; // Descending order
+      });
     
     applyFilters();
   } catch (error) {
