@@ -31,26 +31,37 @@ const currentUser = computed(() => {
 });
 
 const userDisplayName = computed(() => {
-  if (!currentUser.value) return '';
-  // Build display name from firstName and lastName
-  const fullName = [currentUser.value.firstName, currentUser.value.lastName]
-    .filter(Boolean)
-    .join(' ');
-  console.log('User display name:', fullName, 'firstName:', currentUser.value.firstName, 'lastName:', currentUser.value.lastName);
-  return fullName || 
-         currentUser.value.email?.split('@')[0] || 
-         'User';
+  if (!currentUser.value) {
+    console.log('No current user');
+    return '';
+  }
+  
+  try {
+    const fullName = [currentUser.value.firstName, currentUser.value.lastName]
+      .filter(name => name && typeof name === 'string')
+      .join(' ');
+    
+    console.log('Computed fullName:', fullName);
+    return fullName || currentUser.value.email?.split('@')[0] || 'User';
+  } catch (error) {
+    console.error('Error computing display name:', error);
+    return currentUser.value.email?.split('@')[0] || 'User';
+  }
 });
 
-// Generate user initials for avatar
 const userInitials = computed(() => {
-  if (!userDisplayName.value) return 'U';
-  
-  const names = userDisplayName.value.trim().split(' ');
-  if (names.length >= 2) {
+  try {
+    const name = userDisplayName.value || '';
+    console.log('Computing initials for:', name);
+    
+    const names = name.trim().split(/\s+/);
+    if (names.length === 0) return 'U';
+    if (names.length === 1) return names[0][0].toUpperCase();
     return (names[0][0] + names[names.length - 1][0]).toUpperCase();
+  } catch (error) {
+    console.error('Error computing initials:', error);
+    return 'U';
   }
-  return names[0][0].toUpperCase();
 });
 
 // Generate a consistent color based on user's name
@@ -151,8 +162,13 @@ const handleLogout = async () => {
       </div>
       
       <!-- Initials Avatar -->
-      <v-avatar size="36" class="mr-2" :color="avatarColor">
-        <span class="text-white font-weight-bold text-body-1">
+      <v-avatar 
+        size="36" 
+        class="mr-2" 
+        :color="avatarColor"
+        style="border: 2px solid red; background-color: blue !important;"
+      >
+        <span class="text-white font-weight-bold text-body-1" style="font-size: 16px;">
           {{ userInitials }}
         </span>
       </v-avatar>
