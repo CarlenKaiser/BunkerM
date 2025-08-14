@@ -151,8 +151,29 @@ export const mqttService = {
   },
 
   async getRole(name) {
-    const response = await api.get(`/roles/${name}`);
-    return response.data;
+    try {
+      console.log(`[getRole] Fetching role: ${name}`);
+      const response = await api.get(`/roles/${name}`);
+      console.log(`[getRole] Response for role ${name}:`, response.data);
+      
+      // Add detailed inspection of the response
+      if (response.data && response.data.role) {
+        console.log(`[getRole] Role data structure:`, {
+          isString: typeof response.data.role === 'string',
+          isObject: typeof response.data.role === 'object',
+          keys: typeof response.data.role === 'object' ? Object.keys(response.data.role) : 'N/A'
+        });
+        
+        if (typeof response.data.role === 'string') {
+          console.log(`[getRole] Raw role string content:\n${response.data.role}`);
+        }
+      }
+      
+      return response.data;
+    } catch (error) {
+      console.error(`[getRole] Error fetching role ${name}:`, error);
+      throw error;
+    }
   },
 
   async deleteRole(name) {
@@ -211,20 +232,58 @@ export const mqttService = {
 
   //############## ACL MQTT Topic to Role assigements management service #########################//
   async addRoleACL(roleName, aclData) {
-    const response = await api.post(`/roles/${roleName}/acls`, {
-      topic: aclData.topic,
-      aclType: aclData.aclType,
-      permission: aclData.permission
-    });
-    return response.data;
+    try {
+      console.log(`[addRoleACL] Adding ACL to role ${roleName}:`, aclData);
+      const response = await api.post(`/roles/${roleName}/acls`, {
+        topic: aclData.topic,
+        aclType: aclData.aclType,
+        permission: aclData.permission
+      });
+      
+      console.log(`[addRoleACL] Response for role ${roleName}:`, response.data);
+      
+      // Verify the role was actually updated
+      if (response.data && response.data.success !== false) {
+        console.log(`[addRoleACL] Verifying update for role ${roleName}`);
+        const updatedRole = await this.getRole(roleName);
+        console.log(`[addRoleACL] Updated role data:`, updatedRole);
+      }
+      
+      return response.data;
+    } catch (error) {
+      console.error(`[addRoleACL] Error adding ACL to role ${roleName}:`, {
+        error: error.message,
+        response: error.response?.data
+      });
+      throw error;
+    }
   },
 
   async removeRoleACL(roleName, aclType, topic) {
-    const encodedTopic = encodeURIComponent(topic);
-    const response = await api.delete(
-      `/roles/${roleName}/acls?acl_type=${aclType}&topic=${encodedTopic}`
-    );
-    return response.data;
+    try {
+      console.log(`[removeRoleACL] Removing ACL from role ${roleName}:`, { aclType, topic });
+      const encodedTopic = encodeURIComponent(topic);
+      const response = await api.delete(
+        `/roles/${roleName}/acls?acl_type=${aclType}&topic=${encodedTopic}`
+      );
+      
+      console.log(`[removeRoleACL] Response for role ${roleName}:`, response.data);
+      
+      // Verify the role was actually updated
+      if (response.data && response.data.success !== false) {
+        console.log(`[removeRoleACL] Verifying update for role ${roleName}`);
+        const updatedRole = await this.getRole(roleName);
+        console.log(`[removeRoleACL] Updated role data:`, updatedRole);
+      }
+      
+      return response.data;
+    } catch (error) {
+      console.error(`[removeRoleACL] Error removing ACL from role ${roleName}:`, {
+        error: error.message,
+        response: error.response?.data
+      });
+      throw error;
+    }
   },
 
   async importPasswordFile(formData) {

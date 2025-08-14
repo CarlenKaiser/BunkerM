@@ -66,10 +66,20 @@ const userInitials = computed(() => {
 
 // Generate a consistent color based on user's name
 const avatarColor = computed(() => {
-  // Use more visible colors
+  // Use actual color values instead of names
   const colors = [
-    'primary', 'error', 'purple', 'indigo', 'teal', 'orange',
-    'blue', 'red', 'green', 'deep-purple', 'cyan', 'amber'
+    '#4CAF50', // green
+    '#2196F3', // blue
+    '#F44336', // red
+    '#673AB7', // deep-purple
+    '#009688', // teal
+    '#FF9800', // orange
+    '#E91E63', // pink
+    '#3F51B5', // indigo
+    '#00BCD4', // cyan
+    '#FF5722', // deep-orange
+    '#795548', // brown
+    '#607D8B'  // blue-grey
   ];
   
   const str = userDisplayName.value || 'User';
@@ -79,17 +89,6 @@ const avatarColor = computed(() => {
   }
   return colors[Math.abs(hash) % colors.length];
 });
-
-//  logout handler
-const handleLogout = async () => {
-  try {
-    await authStore.logout();
-    router.push('/auth/login'); // Redirect to login page after logout
-  } catch (error) {
-    console.error('Logout error:', error);
-    // Optionally handle error (show message, etc.)
-  }
-};
 </script>
 
 <template>
@@ -163,14 +162,14 @@ const handleLogout = async () => {
       
       <!-- Initials Avatar -->
       <v-avatar 
-        size="36" 
-        class="mr-2" 
-        :color="avatarColor"
-      >
-        <span class="text-white font-weight-bold">
-          {{ userInitials }}
-        </span>
-      </v-avatar>
+          size="36" 
+          class="mr-2" 
+          :style="{ backgroundColor: avatarColor }"
+        >
+          <span class="text-white font-weight-bold">
+            {{ userInitials }}
+          </span>
+        </v-avatar>
     </div>
 
     <!-- ---------------------------------------------- -->
