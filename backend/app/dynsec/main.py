@@ -23,9 +23,7 @@ from logging.handlers import RotatingFileHandler
 import uvicorn
 import firebase_admin
 from firebase_admin import auth, credentials, exceptions as firebase_exceptions
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
+from password_import import router as password_import_router
 
 # Load environment variables
 load_dotenv()
@@ -70,9 +68,6 @@ DYNSEC_BASE_COMMAND = [
     "dynsec"
 ]
 
-# Rate limiter
-limiter = Limiter(key_func=get_remote_address)
-
 # Initialize FastAPI app
 app = FastAPI(
     title="Mosquitto DynSec API",
@@ -94,9 +89,6 @@ app.add_middleware(
     TrustedHostMiddleware, 
     allowed_hosts=ALLOWED_HOSTS
 )
-
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Security
 security = HTTPBearer()
@@ -251,15 +243,20 @@ async def add_process_time_header(request: Request, call_next):
     })
     return response
 
+# Include password import router
+app.include_router(password_import_router, prefix="/api/v1")
+
 # Client Management Endpoints
 @app.post("/api/v1/clients", response_model=ClientResponse)
-@limiter.limit("30/minute")
 async def create_client(
-    request: Request,
     client: ClientCreate,
+    request: Request,
     user: dict = Depends(require_management)
 ):
     """Create new MQTT client"""
+    await log_request(request)
+    logger.info(f"Creating new client with username: {client.username}")
+
     try:
         # Create client
         success, result = execute_mosquitto_command(["createClient", client.username])
@@ -290,7 +287,6 @@ async def create_client(
         )
 
 @app.get("/api/v1/clients")
-@limiter.limit("60/minute")
 async def list_clients(
     request: Request,
     user: dict = Depends(require_management)
@@ -301,33 +297,286 @@ async def list_clients(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
     return {"clients": result.split('\n')}
 
+@app.get("/api/v1/clients/{username}")
+async def get_client(
+    username: str,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Get client details"""
+    success, result = execute_mosquitto_command(["getClient", username])
+    if not success:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Client not found")
+    return {"client": result}
+
+@app.put("/api/v1/clients/{username}/enable")
+async def enable_client(
+    username: str,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Enable a client"""
+    success, result = execute_mosquitto_command(["enableClient", username])
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"message": f"Client {username} enabled"}
+
+@app.put("/api/v1/clients/{username}/disable")
+async def disable_client(
+    username: str,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Disable a client"""
+    success, result = execute_mosquitto_command(["disableClient", username])
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"message": f"Client {username} disabled"}
+
+@app.delete("/api/v1/clients/{username}")
+async def delete_client(
+    username: str,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Delete a client"""
+    success, result = execute_mosquitto_command(["deleteClient", username])
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"message": f"Client {username} deleted"}
+
 # Role Management Endpoints
 @app.post("/api/v1/roles")
-@limiter.limit("30/minute")
 async def create_role(
-    request: Request,
     role: RoleCreate,
+    request: Request,
     user: dict = Depends(require_admin)
 ):
-    """Create new role"""
+    """Create a new role"""
     success, result = execute_mosquitto_command(["createRole", role.name])
     if not success:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
     return {"message": f"Role {role.name} created"}
 
-# Group Management Endpoints
-@app.post("/api/v1/groups")
-@limiter.limit("30/minute")
-async def create_group(
+@app.get("/api/v1/roles")
+async def list_roles(
     request: Request,
-    group: GroupCreate,
     user: dict = Depends(require_management)
 ):
-    """Create new group"""
+    """List all roles"""
+    success, result = execute_mosquitto_command(["listRoles"])
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"roles": result.split('\n')}
+
+@app.get("/api/v1/roles/{role_name}")
+async def get_role(
+    role_name: str,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Get role details"""
+    success, result = execute_mosquitto_command(["getRole", role_name])
+    if not success:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Role not found")
+    return {"role": result}
+
+@app.delete("/api/v1/roles/{role_name}")
+async def delete_role(
+    role_name: str,
+    request: Request,
+    user: dict = Depends(require_admin)
+):
+    """Delete a role"""
+    success, result = execute_mosquitto_command(["deleteRole", role_name])
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"message": f"Role {role_name} deleted"}
+
+# Group Management Endpoints
+@app.post("/api/v1/groups")
+async def create_group(
+    group: GroupCreate,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Create a new group"""
     success, result = execute_mosquitto_command(["createGroup", group.name])
     if not success:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
     return {"message": f"Group {group.name} created"}
+
+@app.get("/api/v1/groups")
+async def list_groups(
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """List all groups"""
+    success, result = execute_mosquitto_command(["listGroups"])
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"groups": result.split('\n')}
+
+@app.get("/api/v1/groups/{group_name}")
+async def get_group(
+    group_name: str,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Get group details"""
+    success, result = execute_mosquitto_command(["getGroup", group_name])
+    if not success:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Group not found")
+    return {"group": result}
+
+@app.delete("/api/v1/groups/{group_name}")
+async def delete_group(
+    group_name: str,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Delete a group"""
+    success, result = execute_mosquitto_command(["deleteGroup", group_name])
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"message": f"Group {group_name} deleted"}
+
+# Role Assignment Endpoints
+@app.post("/api/v1/clients/{username}/roles")
+async def add_client_role(
+    username: str,
+    role: RoleAssignment,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Add role to client"""
+    success, result = execute_mosquitto_command(
+        ["addClientRole", username, role.role_name, str(role.priority or 1)]
+    )
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"message": f"Role {role.role_name} added to client {username}"}
+
+@app.delete("/api/v1/clients/{username}/roles/{role_name}")
+async def remove_client_role(
+    username: str,
+    role_name: str,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Remove role from client"""
+    success, result = execute_mosquitto_command(
+        ["removeClientRole", username, role_name]
+    )
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"message": f"Role {role_name} removed from client {username}"}
+
+@app.post("/api/v1/groups/{group_name}/roles")
+async def add_group_role(
+    group_name: str,
+    role: RoleAssignment,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Add role to group"""
+    success, result = execute_mosquitto_command(
+        ["addGroupRole", group_name, role.role_name, str(role.priority or 1)]
+    )
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"message": f"Role {role.role_name} added to group {group_name}"}
+
+@app.delete("/api/v1/groups/{group_name}/roles/{role_name}")
+async def remove_group_role(
+    group_name: str,
+    role_name: str,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Remove role from group"""
+    success, result = execute_mosquitto_command(
+        ["removeGroupRole", group_name, role_name]
+    )
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"message": f"Role {role_name} removed from group {group_name}"}
+
+# Group Client Management Endpoints
+@app.post("/api/v1/groups/{group_name}/clients")
+async def add_client_to_group(
+    group_name: str,
+    data: dict,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Add client to group"""
+    username = data.get("username")
+    priority = data.get("priority")
+    
+    if not username:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Username required")
+    
+    cmd = ["addGroupClient", group_name, username]
+    if priority:
+        cmd.extend(["--priority", str(priority)])
+    
+    success, result = execute_mosquitto_command(cmd)
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"message": f"Client {username} added to group {group_name}"}
+
+@app.delete("/api/v1/groups/{group_name}/clients/{username}")
+async def remove_client_from_group(
+    group_name: str,
+    username: str,
+    request: Request,
+    user: dict = Depends(require_management)
+):
+    """Remove client from group"""
+    success, result = execute_mosquitto_command(
+        ["removeGroupClient", group_name, username]
+    )
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"message": f"Client {username} removed from group {group_name}"}
+
+# ACL Management Endpoints
+@app.post("/api/v1/roles/{role_name}/acls")
+async def add_role_acl(
+    role_name: str,
+    acl: ACLRequest,
+    request: Request,
+    user: dict = Depends(require_admin)
+):
+    """Add ACL to role"""
+    if acl.aclType not in ["publishClientSend", "subscribeLiteral"]:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid ACL type")
+    if acl.permission not in ["allow", "deny"]:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid permission")
+    
+    success, result = execute_mosquitto_command(
+        ["addRoleACL", role_name, acl.aclType, acl.topic, acl.permission]
+    )
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"message": f"ACL added to role {role_name}"}
+
+@app.delete("/api/v1/roles/{role_name}/acls")
+async def remove_role_acl(
+    role_name: str,
+    acl_type: ACLType,
+    topic: str,
+    request: Request,
+    user: dict = Depends(require_admin)
+):
+    """Remove ACL from role"""
+    success, result = execute_mosquitto_command(
+        ["removeRoleACL", role_name, str(acl_type.value), topic]
+    )
+    if not success:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
+    return {"message": f"ACL removed from role {role_name}"}
 
 # Health Check
 @app.get("/api/v1/health")
@@ -338,19 +587,6 @@ async def health_check(request: Request):
         "timestamp": datetime.now().isoformat(),
         "version": "2.0.0"
     }
-
-# Error Handling
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
-    """Custom HTTP exception handler"""
-    logger.error(f"HTTP Error {exc.status_code}: {exc.detail}")
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "error": exc.detail,
-            "success": False
-        }
-    )
 
 if __name__ == "__main__":
     logger.info("Starting DynSec API")
