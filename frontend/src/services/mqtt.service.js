@@ -57,20 +57,11 @@ export const mqttService = {
     try {
       const response = await api.get('/clients');
       
-      // Debug logging - check what we're actually getting
-      console.log('Raw API response:', response);
-      console.log('Response data:', response.data);
-      console.log('Response data type:', typeof response.data);
-      console.log('Response data keys:', Object.keys(response.data || {}));
-      
       // Check if clients property exists
       if (!response.data.clients) {
         console.warn('No clients property in response data');
         return [];
       }
-      
-      console.log('Clients array:', response.data.clients);
-      console.log('Clients array type:', Array.isArray(response.data.clients));
       
       // Handle both array and string cases
       let clientsList;
@@ -141,6 +132,7 @@ export const mqttService = {
 
   async getRoles() {
     const response = await api.get('/roles');
+    console.log("Roles Found: ", roles);
     return response.data.roles.split('\n').filter(Boolean).map(name => ({ name }));
   },
 
@@ -164,6 +156,7 @@ export const mqttService = {
 
   async getGroups() {
     const response = await api.get('/groups');
+    console.log("Groups Found: ", groups);
     return response.data.groups.split('\n').filter(Boolean).map(name => ({ name }));
   },
 

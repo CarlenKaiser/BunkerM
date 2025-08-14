@@ -18,7 +18,6 @@ export const roleService = {
     
     // Handle different response formats
     const roles = response.data.roles || response.data || [];
-    console.log("Roles Found: ", roles);
     
     // If it's already an array, return it mapped
     if (Array.isArray(roles)) {
