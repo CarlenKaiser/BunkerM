@@ -35,8 +35,9 @@ export const roleService = {
 
   async getRole(name) {
     const response = await api.get(`/roles/${name}`);
+    console.log('Raw role response:', response);
     return response.data;
-  },
+},
 
   async createRole(name) {
     const response = await api.post('/roles', { name });
@@ -59,6 +60,7 @@ export const roleService = {
       aclType: aclData.aclType,
       permission: aclData.permission
     });
+    await this.getRole(roleName);
     return response.data;
   },
 

@@ -15,12 +15,12 @@ export const groupService = {
       
       // Handle both array and string response formats
       let groupsList;
-      if (Array.isArray(response.data.groups)) {
-        groupsList = response.data.groups;
-      } else if (typeof response.data.groups === 'string') {
-        groupsList = response.data.groups.split('\n').filter(Boolean);
+      if (Array.isArray(response.data)) {
+        groupsList = response.data;
+      } else if (typeof response.data === 'string') {
+        groupsList = response.data.split('\n').filter(Boolean);
       } else {
-        console.warn('Unexpected groups data format:', response.data.groups);
+        console.warn('Unexpected groups data format:', response.data);
         return [];
       }
       

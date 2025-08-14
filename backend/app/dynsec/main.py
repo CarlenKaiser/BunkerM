@@ -379,6 +379,10 @@ async def get_role(
     success, result = execute_mosquitto_command(["getRole", role_name])
     if not success:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Role not found")
+    
+    # Add logging to see the raw response
+    logger.info(f"Raw role data for {role_name}: {result}")
+    
     return {"role": result}
 
 @app.delete("/api/v1/roles/{role_name}")
@@ -394,17 +398,14 @@ async def delete_role(
     return {"message": f"Role {role_name} deleted"}
 
 # Group Management Endpoints
-@app.post("/api/v1/groups")
-async def create_group(
-    group: GroupCreate,
-    request: Request,
-    user: dict = Depends(require_management)
-):
-    """Create a new group"""
-    success, result = execute_mosquitto_command(["createGroup", group.name])
+@app.get("/api/v1/groups")
+async def list_groups(request: Request, user: dict = Depends(require_management)):
+    """List all groups"""
+    success, result = execute_mosquitto_command(["listGroups"])
     if not success:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
-    return {"message": f"Group {group.name} created"}
+    # Return as direct array
+    return result.split('\n')
 
 @app.get("/api/v1/groups")
 async def list_groups(
