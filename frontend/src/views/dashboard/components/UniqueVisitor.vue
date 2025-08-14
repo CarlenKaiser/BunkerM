@@ -447,7 +447,7 @@ const tab = ref('one');
     </v-card-item>
 
     <!-- Debug info for development -->
-    <div v-if="timestampDebugInfo && process.env.NODE_ENV === 'development'" class="ma-2 pa-2 bg-grey-lighten-4 rounded text-caption">
+    <div class="ma-2 pa-2 bg-grey-lighten-4 rounded text-caption">
       <strong>Debug Info:</strong><br>
       6h timestamps: {{ timestampDebugInfo.sixHourTimestamps }}<br>
       Full timestamps: {{ timestampDebugInfo.fullStatsTimestamps }}<br>

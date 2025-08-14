@@ -15,6 +15,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from paho.mqtt import client as mqtt_client
 import asyncio
+import threading
 from typing import Dict, List, Optional
 from collections import deque
 from datetime import datetime, timedelta
@@ -81,17 +82,162 @@ MONITORED_TOPICS = {
     "$SYS/broker/load/bytes/sent/15min": "bytes_sent_15min"
 }
 
+class MessageCounter:
+    def __init__(self, file_path="message_counts.json"):
+        self.file_path = file_path
+        self.daily_counts = self._load_counts()
 
-from functools import lru_cache
-import time
+    def _load_counts(self) -> Dict[str, int]:
+        if os.path.exists(self.file_path):
+            try:
+                with open(self.file_path, 'r') as f:
+                    data = json.load(f)
+                    return {item['timestamp'].split()[0]: item['message_counter'] 
+                           for item in data}
+            except json.JSONDecodeError:
+                return {}
+        return {}
 
-# Add caching to reduce processing time
+    def _save_counts(self):
+        data = [
+            {"timestamp": f"{date} 00:00", "message_counter": count}
+            for date, count in self.daily_counts.items()
+        ]
+        with open(self.file_path, 'w') as f:
+            json.dump(data, f, indent=2)
+
+    def increment_count(self):
+        today = datetime.now().date().isoformat()
+        self.daily_counts[today] = self.daily_counts.get(today, 0) + 1
+        cutoff_date = (datetime.now() - timedelta(days=7)).date().isoformat()
+        self.daily_counts = {
+            date: count 
+            for date, count in self.daily_counts.items() 
+            if date >= cutoff_date
+        }
+        self._save_counts()
+
+    def get_total_count(self) -> int:
+        return sum(self.daily_counts.values())
+
 class MQTTStats:
     def __init__(self):
-        # ... existing init code ...
+        # Initialize thread lock for thread-safe operations
+        self._lock = threading.Lock()
+        
+        # Initialize all MQTT stats attributes with default values
+        self.messages_sent = 0
+        self.subscriptions = 0
+        self.retained_messages = 0
+        self.connected_clients = 0
+        self.bytes_received_15min = 0.0
+        self.bytes_sent_15min = 0.0
+        
+        # Initialize message counter and data storage
+        self.message_counter = MessageCounter()
+        try:
+            self.data_storage = HistoricalDataStorage()
+        except Exception as e:
+            logger.warning(f"HistoricalDataStorage not available, using mock: {e}")
+            self.data_storage = self._create_mock_storage()
+        
+        # Initialize timing variables
+        self.last_storage_update = datetime.now()
+        self.last_update = datetime.now()
+        self.last_messages_sent = 0
+        
+        # Initialize deques for storing historical data
+        self.messages_history = deque(maxlen=15)
+        self.published_history = deque(maxlen=15)
+        
+        # Initialize timestamp deques for different metrics
+        self.metrics_timestamps = deque(maxlen=100)
+        self.messages_timestamps = deque(maxlen=100)
+        self.subscriptions_timestamps = deque(maxlen=100)
+        self.clients_timestamps = deque(maxlen=100)
+        self.retained_timestamps = deque(maxlen=100)
+        
+        # Initialize caching attributes
         self._stats_cache = {}
         self._cache_ttl = 5  # Cache for 5 seconds
         self._last_cache_time = 0
+        
+        # Initialize history with zeros
+        for _ in range(15):
+            self.messages_history.append(0)
+            self.published_history.append(0)
+        
+        logger.info("MQTTStats initialized successfully")
+
+    def _create_mock_storage(self):
+        """Create a mock storage object if the real one isn't available"""
+        class MockStorage:
+            def get_hourly_data(self):
+                return {"timestamps": [], "bytes_received": [], "bytes_sent": []}
+            
+            def get_daily_messages(self):
+                return {"dates": [], "counts": [], "timestamps": []}
+            
+            def add_hourly_data(self, bytes_received, bytes_sent):
+                pass
+                
+            def store_data(self, *args, **kwargs):
+                pass
+        
+        return MockStorage()
+
+    def format_number(self, number: int) -> str:
+        """Format large numbers with appropriate suffixes"""
+        if number >= 1_000_000:
+            return f"{number/1_000_000:.1f}M"
+        elif number >= 1_000:
+            return f"{number/1_000:.1f}K"
+        return str(number)
+
+    def increment_user_messages(self):
+        """Increment the count of user messages"""
+        with self._lock:
+            self.message_counter.increment_count()
+            # Record timestamp when messages are received
+            now = datetime.now().isoformat()
+            self.messages_timestamps.append(now)
+
+    def update_metric_timestamp(self, metric_type: str):
+        """Update timestamp for a specific metric type"""
+        now = datetime.now().isoformat()
+        with self._lock:
+            if metric_type == "subscriptions":
+                self.subscriptions_timestamps.append(now)
+            elif metric_type == "clients":
+                self.clients_timestamps.append(now)
+            elif metric_type == "retained":
+                self.retained_timestamps.append(now)
+            
+            # Always update general metrics timestamp
+            self.metrics_timestamps.append(now)
+
+    def update_storage(self):
+        """Update the historical data storage"""
+        now = datetime.now()
+        if (now - self.last_storage_update).total_seconds() >= 180:
+            try:
+                self.data_storage.add_hourly_data(
+                    float(self.bytes_received_15min),
+                    float(self.bytes_sent_15min)
+                )
+                self.last_storage_update = now
+            except Exception as e:
+                logger.error(f"Error updating storage: {e}")
+
+    def update_message_rates(self):
+        """Update message rate tracking"""
+        now = datetime.now()
+        if (now - self.last_update).total_seconds() >= 60:
+            with self._lock:
+                published_rate = max(0, self.messages_sent - self.last_messages_sent)
+                self.published_history.append(published_rate)
+                self.last_messages_sent = self.messages_sent
+                self.last_update = now
 
     @lru_cache(maxsize=10)
     def _get_cached_hourly_data(self, cache_key: str):
@@ -104,6 +250,7 @@ class MQTTStats:
         return self.data_storage.get_daily_messages()
 
     def get_stats(self, include_timestamps: bool = False) -> Dict:
+        """Get comprehensive MQTT statistics with optional timestamps"""
         current_time = time.time()
         cache_key = f"stats_{include_timestamps}_{int(current_time // self._cache_ttl)}"
         
@@ -118,6 +265,7 @@ class MQTTStats:
             self.update_storage()
             
             with self._lock:
+                # Adjust for admin connections (subtract monitoring clients)
                 actual_subscriptions = max(0, self.subscriptions - 2)
                 actual_connected_clients = max(0, self.connected_clients - 1)
                 total_messages = self.message_counter.get_total_count()
@@ -140,7 +288,7 @@ class MQTTStats:
                     "daily_message_stats": daily_messages
                 }
                 
-                # Add timestamps if requested (this is the expensive part)
+                # Add timestamps if requested
                 if include_timestamps:
                     current_timestamp = datetime.now().isoformat()
                     
@@ -196,45 +344,6 @@ class MQTTStats:
                 "mqtt_connected": False,
                 "connection_error": "Error retrieving stats"
             }
-
-
-class MessageCounter:
-    def __init__(self, file_path="message_counts.json"):
-        self.file_path = file_path
-        self.daily_counts = self._load_counts()
-
-    def _load_counts(self) -> Dict[str, int]:
-        if os.path.exists(self.file_path):
-            try:
-                with open(self.file_path, 'r') as f:
-                    data = json.load(f)
-                    return {item['timestamp'].split()[0]: item['message_counter'] 
-                           for item in data}
-            except json.JSONDecodeError:
-                return {}
-        return {}
-
-    def _save_counts(self):
-        data = [
-            {"timestamp": f"{date} 00:00", "message_counter": count}
-            for date, count in self.daily_counts.items()
-        ]
-        with open(self.file_path, 'w') as f:
-            json.dump(data, f, indent=2)
-
-    def increment_count(self):
-        today = datetime.now().date().isoformat()
-        self.daily_counts[today] = self.daily_counts.get(today, 0) + 1
-        cutoff_date = (datetime.now() - timedelta(days=7)).date().isoformat()
-        self.daily_counts = {
-            date: count 
-            for date, count in self.daily_counts.items() 
-            if date >= cutoff_date
-        }
-        self._save_counts()
-
-    def get_total_count(self) -> int:
-        return sum(self.daily_counts.values())
 
 # Initialize MQTT Stats
 mqtt_stats = MQTTStats()
@@ -420,7 +529,7 @@ async def get_mqtt_stats(
     except Exception as e:
         logger.error(f"Unexpected error in get_stats endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-    
+
 @app.get("/api/v1/admin/users")
 async def list_users(
     admin_user: dict = Depends(require_admin),
