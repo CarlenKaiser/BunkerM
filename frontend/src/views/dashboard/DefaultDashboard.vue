@@ -13,17 +13,6 @@ const config = getRuntimeConfig()
 // API configuration
 const API_BASE_URL = config.MONITOR_API_URL
 
-interface ByteStats {
-  timestamps: string[]
-  bytes_received: number[]
-  bytes_sent: number[]
-}
-
-interface DailyMessageStats {
-  dates: string[]
-  counts: number[]
-}
-
 interface Stats {
   total_messages_received: string
   total_subscriptions: number
@@ -33,11 +22,39 @@ interface Stats {
   daily_message_stats: DailyMessageStats
   mqtt_connected: boolean
   connection_error?: string
+  stats_timestamp?: string
+  message_stats_timestamps?: string[]
+  subscription_stats_timestamps?: string[]
+  client_stats_timestamps?: string[]
+  retained_stats_timestamps?: string[]
 }
 
+interface ByteStats {
+  timestamps: string[]
+  bytes_received: number[]
+  bytes_sent: number[]
+}
+
+interface DailyMessageStats {
+  dates: string[]
+  counts: number[]
+  timestamps?: string[] // Add timestamps for daily stats
+}
+
+// New interface for comprehensive stats with timestamps
+interface TimestampedStats {
+  timestamp: string
+  total_messages_received: string
+  total_subscriptions: number
+  retained_messages: number
+  total_connected_clients: number
+}
+
+// Enhanced visitor stats interface
 interface VisitorStats {
   fullStats: ByteStats
   sixHourStats: ByteStats
+  timestampedMetrics?: TimestampedStats[]
 }
 
 const defaultStats: Stats = {
@@ -52,9 +69,15 @@ const defaultStats: Stats = {
   },
   daily_message_stats: {
     dates: [],
-    counts: []
+    counts: [],
+    timestamps: []
   },
-  mqtt_connected: false
+  mqtt_connected: false,
+  stats_timestamp: new Date().toISOString(),
+  message_stats_timestamps: [],
+  subscription_stats_timestamps: [],
+  client_stats_timestamps: [],
+  retained_stats_timestamps: []
 }
 
 const stats = ref<Stats>({ ...defaultStats })
@@ -85,9 +108,35 @@ const visitorStats = computed(() => {
     })
   }
 
+  // Create timestamped metrics array for other stats
+  const timestampedMetrics: TimestampedStats[] = []
+  
+  // If you have historical data for other metrics, combine them here
+  if (stats.value.message_stats_timestamps?.length) {
+    stats.value.message_stats_timestamps.forEach((timestamp: string, index: number) => {
+      timestampedMetrics.push({
+        timestamp,
+        total_messages_received: stats.value.total_messages_received,
+        total_subscriptions: stats.value.total_subscriptions,
+        retained_messages: stats.value.retained_messages,
+        total_connected_clients: stats.value.total_connected_clients
+      })
+    })
+  } else {
+    // Fallback: use current timestamp for current values
+    timestampedMetrics.push({
+      timestamp: stats.value.stats_timestamp || new Date().toISOString(),
+      total_messages_received: stats.value.total_messages_received,
+      total_subscriptions: stats.value.total_subscriptions,
+      retained_messages: stats.value.retained_messages,
+      total_connected_clients: stats.value.total_connected_clients
+    })
+  }
+
   return {
     fullStats: byteStats,
-    sixHourStats
+    sixHourStats,
+    timestampedMetrics
   }
 })
 
@@ -107,7 +156,7 @@ const fetchStats = async () => {
     }
 
     const response = await fetch(
-      `${API_BASE_URL}/stats?nonce=${nonce}&timestamp=${timestamp}`,
+      `${API_BASE_URL}/stats?nonce=${nonce}&timestamp=${timestamp}&include_timestamps=true`,
       {
         method: 'GET',
         headers,
@@ -136,7 +185,16 @@ const fetchStats = async () => {
     stats.value = {
       ...defaultStats,
       ...data,
-      mqtt_connected: data.mqtt_connected || false
+      mqtt_connected: data.mqtt_connected || false,
+      stats_timestamp: data.stats_timestamp || new Date().toISOString(),
+      message_stats_timestamps: data.message_stats_timestamps || [],
+      subscription_stats_timestamps: data.subscription_stats_timestamps || [],
+      client_stats_timestamps: data.client_stats_timestamps || [],
+      retained_stats_timestamps: data.retained_stats_timestamps || [],
+      daily_message_stats: {
+        ...data.daily_message_stats,
+        timestamps: data.daily_message_stats?.timestamps || []
+      }
     }
 
     if (!data.mqtt_connected && data.connection_error) {

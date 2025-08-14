@@ -96,6 +96,13 @@ class MQTTStats:
         self.last_messages_sent = 0
         self.last_update = datetime.now()
         
+        # Add timestamp tracking for all metrics
+        self.metrics_timestamps = deque(maxlen=100)  # Store last 100 timestamps
+        self.messages_timestamps = deque(maxlen=100)
+        self.subscriptions_timestamps = deque(maxlen=100)
+        self.clients_timestamps = deque(maxlen=100)
+        self.retained_timestamps = deque(maxlen=100)
+        
         for _ in range(15):
             self.messages_history.append(0)
             self.published_history.append(0)
@@ -110,6 +117,23 @@ class MQTTStats:
     def increment_user_messages(self):
         with self._lock:
             self.message_counter.increment_count()
+            # Record timestamp when messages are received
+            now = datetime.now().isoformat()
+            self.messages_timestamps.append(now)
+
+    def update_metric_timestamp(self, metric_type: str):
+        """Update timestamp for a specific metric type"""
+        now = datetime.now().isoformat()
+        with self._lock:
+            if metric_type == "subscriptions":
+                self.subscriptions_timestamps.append(now)
+            elif metric_type == "clients":
+                self.clients_timestamps.append(now)
+            elif metric_type == "retained":
+                self.retained_timestamps.append(now)
+            
+            # Always update general metrics timestamp
+            self.metrics_timestamps.append(now)
 
     def update_storage(self):
         now = datetime.now()
@@ -132,7 +156,7 @@ class MQTTStats:
                 self.last_messages_sent = self.messages_sent
                 self.last_update = now
 
-    def get_stats(self) -> Dict:
+    def get_stats(self, include_timestamps: bool = False) -> Dict:
         self.update_message_rates()
         self.update_storage()
         
@@ -143,7 +167,7 @@ class MQTTStats:
             hourly_data = self.data_storage.get_hourly_data()
             daily_messages = self.data_storage.get_daily_messages()
             
-            return {
+            stats = {
                 "total_connected_clients": actual_connected_clients,
                 "total_messages_received": self.format_number(total_messages),
                 "total_subscriptions": actual_subscriptions,
@@ -153,6 +177,33 @@ class MQTTStats:
                 "bytes_stats": hourly_data,
                 "daily_message_stats": daily_messages
             }
+            
+            # Add timestamps if requested
+            if include_timestamps:
+                current_time = datetime.now().isoformat()
+                stats.update({
+                    "stats_timestamp": current_time,
+                    "message_stats_timestamps": list(self.messages_timestamps)[-10:],  # Last 10
+                    "subscription_stats_timestamps": list(self.subscriptions_timestamps)[-10:],
+                    "client_stats_timestamps": list(self.clients_timestamps)[-10:],
+                    "retained_stats_timestamps": list(self.retained_timestamps)[-10:]
+                })
+                
+                # Add timestamps to daily_message_stats if available
+                if "daily_message_stats" in stats and isinstance(stats["daily_message_stats"], dict):
+                    if "dates" in stats["daily_message_stats"]:
+                        # Generate timestamps for each date (assuming end of day)
+                        timestamps = []
+                        for date_str in stats["daily_message_stats"]["dates"]:
+                            try:
+                                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                                timestamp = date_obj.replace(hour=23, minute=59, second=59).isoformat()
+                                timestamps.append(timestamp)
+                            except ValueError:
+                                timestamps.append(current_time)
+                        stats["daily_message_stats"]["timestamps"] = timestamps
+            
+            return stats
 
 class MessageCounter:
     def __init__(self, file_path="message_counts.json"):
@@ -296,7 +347,18 @@ def on_message(client, userdata, msg):
                 
             attr_name = MONITORED_TOPICS[msg.topic]
             with mqtt_stats._lock:
+                old_value = getattr(mqtt_stats, attr_name, 0)
                 setattr(mqtt_stats, attr_name, value)
+                
+                # Update timestamps when values change
+                if old_value != value:
+                    if attr_name == "subscriptions":
+                        mqtt_stats.update_metric_timestamp("subscriptions")
+                    elif attr_name == "connected_clients":
+                        mqtt_stats.update_metric_timestamp("clients")
+                    elif attr_name == "retained_messages":
+                        mqtt_stats.update_metric_timestamp("retained")
+                        
         except ValueError as e:
             logger.error(f"Error processing message from {msg.topic}: {e}")
     elif not msg.topic.startswith('$SYS/'):
@@ -329,13 +391,14 @@ def connect_mqtt():
 @limiter.limit("30/minute")
 async def get_mqtt_stats(
     request: Request,
+    include_timestamps: bool = False,
     user: dict = Depends(require_stats_access)
 ):
     """Get MQTT statistics - requires stats viewing permission"""
     await log_request(request)
     
     try:
-        stats = mqtt_stats.get_stats()
+        stats = mqtt_stats.get_stats(include_timestamps=include_timestamps)
         stats["mqtt_connected"] = mqtt_stats.connected_clients > 0
         
         if not stats["mqtt_connected"]:

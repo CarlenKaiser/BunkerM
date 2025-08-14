@@ -59,12 +59,14 @@ class HistoricalDataStorage:
         """Update daily message count"""
         data = self.load_data()
         current_date = datetime.now().strftime('%Y-%m-%d')
+        current_timestamp = datetime.now().isoformat()
         
         # Find today's entry
         found = False
         for entry in data['daily_messages']:
             if entry['date'] == current_date:
                 entry['count'] += message_count
+                entry['timestamp'] = current_timestamp  # Update timestamp
                 found = True
                 break
 
@@ -72,7 +74,8 @@ class HistoricalDataStorage:
         if not found:
             data['daily_messages'].append({
                 'date': current_date,
-                'count': message_count
+                'count': message_count,
+                'timestamp': current_timestamp
             })
 
         # Keep only last 7 days
@@ -85,56 +88,148 @@ class HistoricalDataStorage:
         self.save_data(data)
 
     def add_hourly_data(self, bytes_received: float, bytes_sent: float):
-        """Add hourly byte rate data"""
+        """Add hourly byte rate data with ISO timestamp"""
         data = self.load_data()
-        current_time = datetime.now().strftime('%Y-%m-%d %H:%M')
+        current_timestamp = datetime.now().isoformat()
         
         data['hourly'].append({
-            'timestamp': current_time,
+            'timestamp': current_timestamp,
             'bytes_received': bytes_received,
             'bytes_sent': bytes_sent
         })
         
         # Keep only last 24 hours of data
-        cutoff_time = (datetime.now() - timedelta(hours=24)).strftime('%Y-%m-%d %H:%M')
+        cutoff_time = datetime.now() - timedelta(hours=24)
         data['hourly'] = [
             entry for entry in data['hourly']
-            if entry['timestamp'] >= cutoff_time
+            if datetime.fromisoformat(entry['timestamp'].replace('Z', '+00:00') if entry['timestamp'].endswith('Z') else entry['timestamp']) >= cutoff_time
         ]
         
         self.save_data(data)
 
     def get_hourly_data(self):
-        """Get hourly byte rate data"""
-        data = self.load_data()
-        hourly_data = data.get('hourly', [])
-        
-        return {
-            'timestamps': [entry['timestamp'] for entry in hourly_data],
-            'bytes_received': [entry['bytes_received'] for entry in hourly_data],
-            'bytes_sent': [entry['bytes_sent'] for entry in hourly_data]
-        }
+        """Get hourly byte rate data with proper timestamp format"""
+        try:
+            data = self.load_data()
+            hourly_data = data.get('hourly', [])
+            
+            # Ensure timestamps are in ISO format
+            timestamps = []
+            bytes_received = []
+            bytes_sent = []
+            
+            for entry in hourly_data:
+                timestamp = entry.get('timestamp', '')
+                
+                # Convert old format timestamps to ISO if needed
+                if timestamp and not timestamp.endswith('Z') and 'T' not in timestamp:
+                    try:
+                        # Handle old format: '2025-01-15 10:30'
+                        dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M')
+                        timestamp = dt.isoformat()
+                    except ValueError:
+                        # If parsing fails, use current time
+                        timestamp = datetime.now().isoformat()
+                
+                timestamps.append(timestamp)
+                bytes_received.append(entry.get('bytes_received', 0))
+                bytes_sent.append(entry.get('bytes_sent', 0))
+            
+            return {
+                'timestamps': timestamps,
+                'bytes_received': bytes_received,
+                'bytes_sent': bytes_sent
+            }
+        except Exception as e:
+            print(f"Error getting hourly data: {e}")
+            return {
+                'timestamps': [],
+                'bytes_received': [],
+                'bytes_sent': []
+            }
 
     def get_daily_messages(self):
-        """Get daily message counts for the last 7 days"""
+        """Get daily message counts for the last 7 days with timestamps"""
         try:
             data = self.load_data()
             if not data['daily_messages']:  # If no data exists yet
                 return {
                     'dates': [],
-                    'counts': []
+                    'counts': [],
+                    'timestamps': []
                 }
                 
             # Sort by date and get last 7 days
             daily_data = sorted(data['daily_messages'], key=lambda x: x['date'])[-7:]
             
+            dates = []
+            counts = []
+            timestamps = []
+            
+            for entry in daily_data:
+                dates.append(entry['date'])
+                counts.append(entry.get('count', 0))
+                
+                # Handle timestamp - create one if it doesn't exist
+                if 'timestamp' in entry:
+                    timestamps.append(entry['timestamp'])
+                else:
+                    # Create timestamp for end of day if not present
+                    try:
+                        date_obj = datetime.strptime(entry['date'], '%Y-%m-%d')
+                        end_of_day = date_obj.replace(hour=23, minute=59, second=59)
+                        timestamps.append(end_of_day.isoformat())
+                    except ValueError:
+                        timestamps.append(datetime.now().isoformat())
+            
             return {
-                'dates': [entry['date'] for entry in daily_data],
-                'counts': [entry['count'] for entry in daily_data]
+                'dates': dates,
+                'counts': counts,
+                'timestamps': timestamps
             }
         except Exception as e:
             print(f"Error getting daily messages: {e}")
             return {
                 'dates': [],
-                'counts': []
+                'counts': [],
+                'timestamps': []
             }
+
+    def cleanup_old_data(self):
+        """Remove data older than max_age_days"""
+        try:
+            data = self.load_data()
+            cutoff_date = datetime.now() - timedelta(days=self.max_age_days)
+            
+            # Clean up hourly data
+            data['hourly'] = [
+                entry for entry in data['hourly']
+                if datetime.fromisoformat(entry['timestamp'].replace('Z', '+00:00') if entry['timestamp'].endswith('Z') else entry['timestamp']) >= cutoff_date
+            ]
+            
+            # Clean up daily messages
+            cutoff_date_str = cutoff_date.strftime('%Y-%m-%d')
+            data['daily_messages'] = [
+                entry for entry in data['daily_messages']
+                if entry['date'] >= cutoff_date_str
+            ]
+            
+            self.save_data(data)
+        except Exception as e:
+            print(f"Error cleaning up old data: {e}")
+
+    def get_stats_summary(self):
+        """Get a summary of stored data for debugging"""
+        try:
+            data = self.load_data()
+            return {
+                'hourly_records': len(data.get('hourly', [])),
+                'daily_message_records': len(data.get('daily_messages', [])),
+                'oldest_hourly': data['hourly'][0]['timestamp'] if data.get('hourly') else None,
+                'newest_hourly': data['hourly'][-1]['timestamp'] if data.get('hourly') else None,
+                'oldest_daily': data['daily_messages'][0]['date'] if data.get('daily_messages') else None,
+                'newest_daily': data['daily_messages'][-1]['date'] if data.get('daily_messages') else None
+            }
+        except Exception as e:
+            print(f"Error getting stats summary: {e}")
+            return {}
