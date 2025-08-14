@@ -42,10 +42,31 @@ const userDisplayName = computed(() => {
          'User';
 });
 
-const userPhotoURL = computed(() => {
-  const photoURL = currentUser.value?.photoURL || '';
-  console.log('User photo URL:', photoURL);
-  return photoURL;
+// Generate user initials for avatar
+const userInitials = computed(() => {
+  if (!userDisplayName.value) return 'U';
+  
+  const names = userDisplayName.value.trim().split(' ');
+  if (names.length >= 2) {
+    return (names[0][0] + names[names.length - 1][0]).toUpperCase();
+  }
+  return names[0][0].toUpperCase();
+});
+
+// Generate a consistent color based on user's name
+const avatarColor = computed(() => {
+  const colors = [
+    'primary', 'secondary', 'success', 'info', 'warning', 'error',
+    'purple', 'indigo', 'cyan', 'teal', 'green', 'orange'
+  ];
+  
+  // Simple hash function to get consistent color for each user
+  let hash = 0;
+  const str = userDisplayName.value || 'User';
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
 });
 
 //  logout handler
@@ -129,20 +150,11 @@ const handleLogout = async () => {
         </span>
       </div>
       
-      <!-- Profile Picture -->
-      <v-avatar size="36" class="mr-2">
-        <img 
-          v-if="userPhotoURL" 
-          :src="userPhotoURL" 
-          :alt="userDisplayName"
-          @error="(e) => { const target = e.target as HTMLImageElement; if (target) target.style.display = 'none'; }"
-        />
-        <v-icon 
-          v-else 
-          icon="mdi-account-circle"
-          size="36"
-          class="text-secondary"
-        />
+      <!-- Initials Avatar -->
+      <v-avatar size="36" class="mr-2" :color="avatarColor">
+        <span class="text-white font-weight-bold text-body-1">
+          {{ userInitials }}
+        </span>
       </v-avatar>
     </div>
 
