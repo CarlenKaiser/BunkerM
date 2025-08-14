@@ -64,7 +64,9 @@ let intervalId: number | null = null
 
 const visitorStats = computed(() => {
   const byteStats = stats.value.bytes_stats
+  console.log('Raw bytes_stats:', byteStats)
   const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000)
+  console.log('Six hours ago:', sixHoursAgo)
   
   const sixHourStats: ByteStats = {
     timestamps: [],
@@ -84,7 +86,7 @@ const visitorStats = computed(() => {
       }
     })
   }
-
+  console.log('Filtered sixHourStats:', sixHourStats)
   return {
     fullStats: byteStats,
     sixHourStats
