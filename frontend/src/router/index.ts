@@ -4,7 +4,26 @@ import AuthRoutes from './AuthRoutes';
 import { useAuthStore } from '@/stores/auth';
 import { useUIStore } from '@/stores/ui';
 
-export const router = createRouter({
+// Define types inline since vue-router exports might not be available
+interface RouteLocation {
+  path: string;
+  meta?: { requiresAuth?: boolean };
+  [key: string]: any;
+}
+
+interface NavigationGuard {
+  (path?: string): void;
+  (): void;
+}
+
+// Proper module augmentation
+declare module 'vue-router' {
+  interface RouteMeta {
+    requiresAuth?: boolean;
+  }
+}
+
+const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
@@ -16,30 +35,44 @@ export const router = createRouter({
   ]
 });
 
-router.beforeEach(async (to, from, next) => {
-  const requiresAuth = to.matched.some(record => record.meta.requiresAuth);
+router.beforeEach(async (
+  to: RouteLocation, 
+  from: RouteLocation, 
+  next: NavigationGuard
+) => {
   const authStore = useAuthStore();
-
-  // Wait for the auth store to initialize
-  if (authStore.loading) {
+  
+  if (!authStore.initialized) {
     await authStore.init();
   }
 
-  if (requiresAuth && !authStore.user) {
+  if (to.meta?.requiresAuth && !authStore.isAuthenticated) {
     next('/auth/login');
-  } else if (to.path.includes('/auth') && authStore.user) {
-    next('/dashboard'); // Redirect to dashboard if user is already logged in
-  } else {
-    next();
+    return;
   }
+  
+  if (to.path.startsWith('/auth') && authStore.isAuthenticated) {
+    next('/dashboard');
+    return;
+  }
+
+  next();
 });
 
-router.beforeEach(() => {
+router.beforeEach((
+  to: RouteLocation, 
+  from: RouteLocation, 
+  next: NavigationGuard
+) => {
   const uiStore = useUIStore();
   uiStore.isLoading = true;
+  next();
 });
 
 router.afterEach(() => {
   const uiStore = useUIStore();
   uiStore.isLoading = false;
 });
+
+export { router };
+export default router;

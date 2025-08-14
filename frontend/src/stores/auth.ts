@@ -2,92 +2,96 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { onIdTokenChanged } from 'firebase/auth';
+import type { User as FirebaseUser } from 'firebase/auth'; // Import FirebaseUser type
 import { auth } from '@/firebase';
 import { loginWithMicrosoft, logoutUser } from '@/services/auth';
 import type { User } from '@/types/user';
-
 export type { User } from '@/types/user';
 
 export const useAuthStore = defineStore('auth', () => {
+  // State
   const user = ref<User | null>(null);
   const token = ref<string | null>(null);
   const loading = ref(true);
   const error = ref<string | null>(null);
+  const initialized = ref(false); // Declare initialized ref
+
+  // Helper function to handle signed in user
+  async function handleSignedInUser(firebaseUser: FirebaseUser) {
+    const idToken = await firebaseUser.getIdToken();
+    
+    if (!firebaseUser.email) {
+      throw new Error('User has no email address');
+    }
+
+    const authUser: User = {
+      id: firebaseUser.uid,
+      email: firebaseUser.email,
+      firstName: firebaseUser.displayName?.split(' ')[0] || '',
+      lastName: firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
+      role: 'user',
+      createdAt: firebaseUser.metadata.creationTime || new Date().toISOString(),
+    };
+
+    // Get custom claims
+    try {
+      const tokenResult = await firebaseUser.getIdTokenResult(true);
+      if (tokenResult.claims.role) {
+        authUser.role = tokenResult.claims.role as string;
+      }
+    } catch (claimsError) {
+      console.warn('Could not get custom claims:', claimsError);
+    }
+
+    localStorage.setItem('firebaseToken', idToken);
+    setUser(authUser, idToken);
+  }
 
   /**
-   * Initialize auth state (no redirect handling needed for popup)
+   * Initialize auth state
    */
-  async function init() {
-    loading.value = true;
-    error.value = null;
+  async function init(): Promise<void> {
+    return new Promise((resolve) => {
+      loading.value = true;
+      error.value = null;
 
-    // Listen for auth state changes
-    onIdTokenChanged(auth, async (firebaseUser) => {
-      try {
-        if (firebaseUser) {
-          // User is signed in
-          const idToken = await firebaseUser.getIdToken();
-          
-          
-          // Validate required fields
-          if (!firebaseUser.email) {
-            throw new Error('User has no email address');
+      const unsubscribe = onIdTokenChanged(auth, async (firebaseUser) => {
+        try {
+          if (firebaseUser) {
+            await handleSignedInUser(firebaseUser);
+          } else {
+            setUser(null, null);
           }
-
-          const authUser: User = {
-            id: firebaseUser.uid,
-            email: firebaseUser.email,
-            firstName: firebaseUser.displayName?.split(' ')[0] || '',
-            lastName: firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
-            role: 'user', // Default role, you can fetch from custom claims
-            createdAt: firebaseUser.metadata.creationTime || new Date().toISOString(),
-          };
-
-          // Get custom claims for role-based access
-          try {
-            const tokenResult = await firebaseUser.getIdTokenResult();
-            if (tokenResult.claims.role) {
-              authUser.role = tokenResult.claims.role as string;
-            }
-          } catch (claimsError) {
-            console.warn('Could not get custom claims:', claimsError);
-          }
-
-          setUser(authUser, idToken);
-          error.value = null;
-        } else {
-          // User is signed out
+        } catch (err) {
+          console.error('Auth state change error:', err);
+          error.value = 'Authentication error occurred';
           setUser(null, null);
+        } finally {
+          if (!initialized.value) {
+            initialized.value = true;
+            resolve();
+          }
+          loading.value = false;
         }
-      } catch (err) {
-        console.error('Auth state change error:', err);
-        error.value = 'Authentication error occurred';
-        setUser(null, null);
-      }
-      
-      loading.value = false;
+      });
+
+      // Cleanup function
+      return () => unsubscribe();
     });
   }
 
   /**
-   * Login with OIDC provider using popup
+   * Login with Microsoft SSO
    */
   async function loginWithMicrosoftSSO() {
     try {
       loading.value = true;
       error.value = null;
-      
-      // This will trigger a popup and return the user directly
       const firebaseUser = await loginWithMicrosoft();
-      
-      // The auth state change listener will handle setting the user
-      // But we can also handle success immediately if needed
-      console.log('Login successful, user:', firebaseUser.displayName);
-      
       return firebaseUser;
     } catch (err: any) {
       console.error('Microsoft login error:', err);
-      error.value = err.message || 'Failed to sign in with OIDC provider';
+      error.value = err.message || 'Failed to sign in with Microsoft';
       throw err;
     } finally {
       loading.value = false;
@@ -101,7 +105,6 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       error.value = null;
       await logoutUser();
-      // Auth state change will be handled by onIdTokenChanged
     } catch (err: any) {
       console.error('Logout error:', err);
       error.value = err.message || 'Failed to logout';
@@ -124,6 +127,16 @@ export const useAuthStore = defineStore('auth', () => {
     error.value = null;
   }
 
+  /**
+   * Check authentication status
+   */
+  async function checkAuth() {
+    if (!initialized.value) {
+      await init();
+    }
+    return isAuthenticated.value;
+  }
+
   // Computed properties
   const isAuthenticated = computed(() => !!user.value && !!token.value);
   const isAdmin = computed(() => user.value?.role === 'admin');
@@ -135,6 +148,7 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     loading,
     error,
+    initialized,
     
     // Getters
     isAuthenticated,
@@ -143,6 +157,7 @@ export const useAuthStore = defineStore('auth', () => {
     
     // Actions
     init,
+    checkAuth,
     loginWithMicrosoftSSO,
     logout,
     setUser,

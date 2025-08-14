@@ -9,6 +9,7 @@ import VueTablerIcons from 'vue-tabler-icons';
 import VueApexCharts from 'vue3-apexcharts';
 import Antd from 'ant-design-vue';
 import 'ant-design-vue/dist/reset.css';
+import { useAuthStore } from '@/stores/auth';
 
 // google-fonts
 import '@fontsource/public-sans/400.css';
@@ -30,30 +31,33 @@ const i18n = createI18n({
   silentFallbackWarn: true
 });
 
-// Initialize the app
 async function initApp() {
-  try {
-    const app = createApp(App);
-    const pinia = createPinia();
+  // 1. Create app and pinia first
+  const app = createApp(App);
+  const pinia = createPinia();
+  
+  app.use(pinia); // Pinia must be registered BEFORE any store access
+  
+  // 2. Initialize auth store BEFORE router
+  const authStore = useAuthStore();
+  await authStore.init(); // Wait for auth state to hydrate
+  
+  // 3. Mock backend and other plugins
+  fakeBackend();
+  
+  // 4. Register router and other plugins
+  app.use(router);
+  app.use(PerfectScrollbarPlugin);
+  app.use(VueTablerIcons);
+  app.use(Antd);
+  app.use(i18n);
+  app.use(VueApexCharts);
+  app.use(vuetify);
 
-    fakeBackend();
-    app.use(router);
-    app.use(PerfectScrollbarPlugin);
-    app.use(pinia);
-    app.use(VueTablerIcons);
-    app.use(Antd);
-    app.use(i18n);
-    app.use(VueApexCharts);
-    app.use(vuetify);
-
-    // Mount the app
-    app.mount('#app');
-
-    console.log('Application initialized successfully');
-  } catch (error) {
-    console.error('Failed to initialize application:', error);
-  }
+  // 5. Mount the app
+  app.mount('#app');
 }
 
-// Start the application
-initApp();
+initApp().catch((error) => {
+  console.error('Application initialization failed:', error);
+});

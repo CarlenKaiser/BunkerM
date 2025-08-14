@@ -11,7 +11,7 @@
     "moduleResolution": "Bundler",
     "module": "ESNext",
     "target": "ESNext",
-    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["vite/client"],
     "allowJs": true,
     "noEmit": true,
@@ -19,6 +19,8 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "jsx": "preserve",
-    "jsxImportSource": "vue"
+    "jsxImportSource": "vue",
+    "strict": true,
+    "forceConsistentCasingInFileNames": true
   }
 }
