@@ -25,13 +25,14 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     const authUser: User = {
-      id: firebaseUser.uid,
-      email: firebaseUser.email,
-      firstName: firebaseUser.displayName?.split(' ')[0] || '',
-      lastName: firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
-      role: 'user',
-      createdAt: firebaseUser.metadata.creationTime || new Date().toISOString(),
-    };
+  id: firebaseUser.uid,
+  email: firebaseUser.email,
+  firstName: firebaseUser.displayName?.split(' ')[0] || '',
+  lastName: firebaseUser.displayName?.split(' ').slice(1).join(' ') || '',
+  photoURL: firebaseUser.photoURL || undefined, // Add this line
+  role: 'user',
+  createdAt: firebaseUser.metadata.creationTime || new Date().toISOString(),
+};
 
     // Get custom claims
     try {

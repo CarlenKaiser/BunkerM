@@ -7,6 +7,7 @@
 # */
 <script setup lang="ts">
 import { useCustomizerStore } from '../../../stores/customizer';
+import { computed } from 'vue';
 // icons
 import { MenuFoldOutlined, SearchOutlined, GithubOutlined, RedditOutlined, LogoutOutlined, SettingOutlined, MoreOutlined } from '@ant-design/icons-vue';
 
@@ -15,16 +16,26 @@ import NotificationDD from './NotificationDD.vue';
 import Searchbar from './SearchBarPanel.vue';
 import ProfileDD from './ProfileDD.vue';
 
-
 import { useAuthStore } from '@/stores/auth';
 import { useRouter } from 'vue-router';
 
-
 const customizer = useCustomizerStore();
-
-
 const authStore = useAuthStore();
-const router = useRouter(); // Add router instance
+const router = useRouter();
+
+// Get current user information from auth store
+const currentUser = computed(() => authStore.user);
+const userDisplayName = computed(() => {
+  if (!currentUser.value) return '';
+  // Build display name from firstName and lastName
+  const fullName = [currentUser.value.firstName, currentUser.value.lastName]
+    .filter(Boolean)
+    .join(' ');
+  return fullName || 
+         currentUser.value.email?.split('@')[0] || 
+         'User';
+});
+const userPhotoURL = computed(() => currentUser.value?.photoURL || '');
 
 //  logout handler
 const handleLogout = async () => {
@@ -69,10 +80,6 @@ const handleLogout = async () => {
     <!-- ---------------------------------------------- -->
     <!-- Search part -->
     <!-- ---------------------------------------------- -->
-
-
-
-
     <v-sheet class="d-none d-lg-block" width="250">
       <Searchbar />
     </v-sheet>
@@ -84,7 +91,6 @@ const handleLogout = async () => {
     <!---right part -->
     <!-- ---------------------------------------------- -->
 
-
     <!-- ---------------------------------------------- -->
     <!-- Github -->
     <!-- ---------------------------------------------- -->
@@ -93,35 +99,63 @@ const handleLogout = async () => {
       <GithubOutlined :style="{ fontSize: '26px' }" />
     </v-btn>
 
-
     <!-- ---------------------------------------------- -->
     <!-- Notification -->
     <!-- ---------------------------------------------- -->
     <NotificationDD />
 
     <!-- ---------------------------------------------- -->
-    <!-- User Profile -->
+    <!-- User Profile Section -->
+    <!-- ---------------------------------------------- -->
+    <div class="d-flex align-center ml-3" v-if="currentUser">
+      <!-- User Info (hidden on mobile) -->
+      <div class="d-none d-sm-flex flex-column mr-3 text-right">
+        <span class="text-body-2 font-weight-medium text-darkText">
+          {{ userDisplayName }}
+        </span>
+        <span class="text-caption text-secondary">
+          {{ currentUser.email }}
+        </span>
+      </div>
+      
+      <!-- Profile Picture -->
+      <v-avatar size="36" class="mr-2">
+        <img 
+          v-if="userPhotoURL" 
+          :src="userPhotoURL" 
+          :alt="userDisplayName"
+          @error="(e) => { const target = e.target as HTMLImageElement; if (target) target.style.display = 'none'; }"
+        />
+        <v-icon 
+          v-else 
+          icon="mdi-account-circle"
+          size="36"
+          class="text-secondary"
+        />
+      </v-avatar>
+    </div>
+
+    <!-- ---------------------------------------------- -->
+    <!-- Profile Menu -->
     <!-- ---------------------------------------------- -->
     <v-menu :close-on-content-click="false" offset="8, 0">
       <template v-slot:activator="{ props }">
         <v-btn class="profileBtn" variant="text" rounded="sm" v-bind="props">
           <div class="d-flex align-center">
-            <!--             <v-avatar class="mr-sm-2 mr-0 py-2">
-              <img src="@/assets/images/users/avatar-1.png" alt="Julia" />
-            </v-avatar> -->
             <MoreOutlined class="v-icon--start" :style="{ fontSize: '26px' }" />
           </div>
         </v-btn>
-        <!--         <v-btn variant="text" color="primary" rounded="sm" icon size="large" @click="handleLogout">
-          <LogoutOutlined :style="{ fontSize: '26px' }" />
-        </v-btn> -->
       </template>
       <v-sheet rounded="md" width="290">
         <ProfileDD />
       </v-sheet>
     </v-menu>
 
-
-
   </v-app-bar>
 </template>
+
+<style scoped>
+.profileBtn {
+  min-width: auto;
+}
+</style>
