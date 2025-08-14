@@ -54,8 +54,33 @@ api.interceptors.response.use(
 export const mqttService = {
 
   async getClients() {
-    const response = await api.get('/clients');
-    return response.data.clients.split('\n').filter(Boolean).map(username => ({ username }));
+    try {
+      const response = await api.get('/clients');
+      
+      // Debug logging - check what we're actually getting
+      console.log('Raw API response:', response);
+      console.log('Response data:', response.data);
+      console.log('Response data type:', typeof response.data);
+      console.log('Response data keys:', Object.keys(response.data || {}));
+      
+      // Check if clients property exists
+      if (!response.data.clients) {
+        console.warn('No clients property in response data');
+        return [];
+      }
+      
+      console.log('Clients string:', response.data.clients);
+      console.log('Clients string type:', typeof response.data.clients);
+      
+      // Original parsing logic
+      const clientsList = response.data.clients.split('\n').filter(Boolean).map(username => ({ username }));
+      console.log('Parsed clients list:', clientsList);
+      
+      return clientsList;
+    } catch (error) {
+      console.error('Error in getClients:', error);
+      return [];
+    }
   },
 
   async getClient(username) {
