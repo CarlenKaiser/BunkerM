@@ -35,11 +35,6 @@ interface Stats {
   connection_error?: string
 }
 
-interface VisitorStats {
-  fullStats: ByteStats
-  sixHourStats: ByteStats
-}
-
 const defaultStats: Stats = {
   total_messages_received: "0",
   total_subscriptions: 0,
@@ -57,11 +52,27 @@ const defaultStats: Stats = {
   mqtt_connected: false
 }
 
+// Component state
 const stats = ref<Stats>({ ...defaultStats })
+const previousStats = ref<Stats | null>(null)
+const messagesTrend = ref(0)
+const subscriptionsTrend = ref(0)
+const clientsTrend = ref(0)
 const error = ref<string | null>(null)
 const isLoading = ref(false)
 let intervalId: number | null = null
 
+// Helper functions
+const parseNumber = (numStr: string): number => {
+  return parseFloat(numStr.replace(/,/g, ''))
+}
+
+const calculateTrend = (previous: number, current: number): number => {
+  if (previous === 0) return 0
+  return Math.round(((current - previous) / previous) * 100)
+}
+
+// Visitor stats computation
 const visitorStats = computed(() => {
   const byteStats = stats.value.bytes_stats
   const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000)
@@ -74,25 +85,17 @@ const visitorStats = computed(() => {
 
   if (byteStats.timestamps?.length) {
     byteStats.timestamps.forEach((ts: string, i: number) => {
-      let timestampDate: Date;
+      let timestampDate: Date
       
       try {
-        // Handle different timestamp formats consistently
         if (ts.includes('T')) {
-          // ISO format - check if it has timezone info
-          if (ts.endsWith('Z') || ts.includes('+') || (ts.match(/:/g) || []).length > 2) {
-            // Has timezone info - parse directly
-            timestampDate = new Date(ts)
-          } else {
-            // No timezone info - treat as UTC
-            timestampDate = new Date(ts + 'Z')
-          }
+          timestampDate = ts.endsWith('Z') || ts.includes('+') || (ts.match(/:/g) || []).length > 2
+            ? new Date(ts)
+            : new Date(ts + 'Z')
         } else {
-          // Simple format "YYYY-MM-DD HH:mm" - treat as UTC
           timestampDate = new Date(ts + ' UTC')
         }
         
-        // Validate the parsed date
         if (isNaN(timestampDate.getTime())) {
           console.warn(`Invalid timestamp: ${ts}`)
           return
@@ -110,9 +113,6 @@ const visitorStats = computed(() => {
       }
     })
   }
-
-  console.log(`Six hours ago: ${sixHoursAgo.toISOString()}`)
-  console.log(`Found ${sixHourStats.timestamps.length} data points in last 6 hours`)
   
   return {
     fullStats: byteStats,
@@ -120,6 +120,7 @@ const visitorStats = computed(() => {
   }
 })
 
+// Fetch stats with trend calculation
 const fetchStats = async () => {
   isLoading.value = true
   try {
@@ -161,12 +162,34 @@ const fetchStats = async () => {
     }
 
     const data = await response.json()
-    
-    stats.value = {
+    const newStats = {
       ...defaultStats,
       ...data,
       mqtt_connected: data.mqtt_connected || false
     }
+
+    // Calculate trends if we have previous stats
+    if (previousStats.value) {
+      // Messages trend
+      const prevMessages = parseNumber(previousStats.value.total_messages_received)
+      const currMessages = parseNumber(newStats.total_messages_received)
+      messagesTrend.value = calculateTrend(prevMessages, currMessages)
+
+      // Subscriptions trend
+      subscriptionsTrend.value = calculateTrend(
+        previousStats.value.total_subscriptions,
+        newStats.total_subscriptions
+      )
+
+      // Clients trend
+      clientsTrend.value = calculateTrend(
+        previousStats.value.total_connected_clients,
+        newStats.total_connected_clients
+      )
+    }
+
+    previousStats.value = newStats
+    stats.value = newStats
 
     if (!data.mqtt_connected && data.connection_error) {
       error.value = data.connection_error
@@ -181,6 +204,7 @@ const fetchStats = async () => {
   }
 }
 
+// Lifecycle hooks
 onMounted(() => {
   fetchStats()
   intervalId = window.setInterval(fetchStats, 2000)
@@ -236,6 +260,9 @@ onUnmounted(() => {
       :total-connected-clients="stats.total_connected_clients" 
       :total-subscriptions="stats.total_subscriptions"
       :retained-messages="stats.retained_messages" 
+      :messages-trend="messagesTrend"
+      :subscriptions-trend="subscriptionsTrend"
+      :clients-trend="clientsTrend"
     />
 
     <v-row>

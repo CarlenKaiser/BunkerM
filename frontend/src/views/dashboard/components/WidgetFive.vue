@@ -40,9 +40,9 @@ const cards = computed(() => [
   {
     name: 'Connected Clients',
     value: formatLocalNumber(props.totalConnectedClients),
-    trend: props.messagesTrend, // Consider adding specific trend for clients
+    trend: null, // No trend for clients unless you track it separately
     text: 'total connected clients',
-    icon: props.messagesTrend >= 0 ? RiseOutlined : FallOutlined
+    icon: RiseOutlined
   },
   {
     name: 'Active Subscriptions',
