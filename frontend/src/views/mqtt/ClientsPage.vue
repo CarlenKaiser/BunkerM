@@ -148,7 +148,6 @@ limitations under the License. -->
     </v-dialog>
 
     <!-- Group Assignment Dialog -->
-    <!-- Group Assignment Dialog -->
     <v-dialog v-model="groupDialog" max-width="500px">
       <v-card>
         <v-card-title>Assign {{ selectedClient?.username }} to Groups</v-card-title>
@@ -191,74 +190,86 @@ limitations under the License. -->
         </v-card-actions>
       </v-card>
     </v-dialog>
-
   </v-container>
 </template>
 
 <script setup>
-//ClientsPage.vue script section
-import { ref, computed, onMounted, inject } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { mqttService } from '@/services/mqtt.service';
 import { useSnackbar } from '@/composables/useSnackbar';
+import { useAuthStore } from '@/stores/auth';
 import axios from 'axios';
 
-const search = ref('');
-const roleDialog = ref(false);
-const selectedClient = ref(null);
-const selectedRole = ref(null);
-const availableRoles = ref([]);
-
-const groupDialog = ref(false);
-const selectedGroup = ref(null);
-const groupPriority = ref(null);
-const availableGroups = ref([]);
-
-const confirmDialog = ref(false);
-const showNotification = inject('showNotification');
+const authStore = useAuthStore();
 const { showSuccess, showError } = useSnackbar();
 
-const dialog = ref(false);
+// Refs
+const search = ref('');
 const loading = ref(false);
 const clients = ref([]);
-const editedIndex = ref(-1);
+const dialog = ref(false);
+const roleDialog = ref(false);
+const groupDialog = ref(false);
+const confirmDialog = ref(false);
+const selectedClient = ref(null);
+const selectedRole = ref(null);
+const selectedGroup = ref(null);
+const groupPriority = ref(null);
+const availableRoles = ref([]);
+const availableGroups = ref([]);
+
 const editedItem = ref({
   username: '',
   password: '',
 });
 
-// Refs for error handling
+// Error handling
 const usernameError = ref('');
 const passwordError = ref('');
 
 // Validation rules
 const rules = {
-  required: value => !!value || 'This field is required'
-  //alphanumeric: value => /^[a-zA-Z0-9]+$/.test(value) || 'Only letters and numbers are allowed'
+  required: value => !!value || 'Required field'
 };
 
-// Clear error functions
-const clearUsernameError = () => {
-  usernameError.value = '';
-};
-
-const clearPasswordError = () => {
-  passwordError.value = '';
-};
-
+// Computed
+const formTitle = computed(() => 'New Client');
+const filteredClients = computed(() => clients.value.filter(client => client.username !== 'bunker'));
 const headers = [
   { title: 'Username', key: 'username', sortable: true },
   { title: '', key: 'actions', sortable: false },
 ];
 
-// Computed
-const formTitle = computed(() => editedIndex.value === -1 ? 'New Client' : 'Edit Client');
+// Methods
+const clearUsernameError = () => usernameError.value = '';
+const clearPasswordError = () => passwordError.value = '';
 
-const filteredClients = computed(() => {
-  return clients.value.filter(client => client.username !== 'bunker');
+const closeDialog = () => {
+  dialog.value = false;
+  groupDialog.value = false;
+  roleDialog.value = false;
+  confirmDialog.value = false;
+  usernameError.value = '';
+  passwordError.value = '';
+  editedItem.value = { username: '', password: '' };
+  fetchClients();
+};
+
+// API Client with SSO Auth
+const api = axios.create({
+  baseURL: import.meta.env.VITE_EVENT_API_URL,
+  headers: {
+    'Content-Type': 'application/json'
+  }
 });
 
-onMounted(async () => {
-  await fetchClients();
+// Add request interceptor for auth token
+api.interceptors.request.use(async (config) => {
+  const token = await authStore.getAccessToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
 });
 
 // Client Management
@@ -268,35 +279,13 @@ async function fetchClients() {
     const response = await mqttService.getClients();
     clients.value = response;
   } catch (error) {
-    /* console.error('Error fetching clients:', error); */
-    showNotification('Failed to fetch clients', 'error');
+    showError('Failed to fetch clients');
   } finally {
     loading.value = false;
   }
 }
 
-function closeDialog() {
-  dialog.value = false;
-  groupDialog.value = false;
-  roleDialog.value = false;
-  confirmDialog.value = false;
-  // Clear form errors when closing
-  usernameError.value = '';
-  passwordError.value = '';
-  // Reset form
-  editedItem.value = {
-    username: '',
-    password: ''
-  };
-  fetchClients();
-}
-
 async function save() {
-  // Reset error messages
-  usernameError.value = '';
-  passwordError.value = '';
-  
-  // Validate username and password
   if (!editedItem.value.username) {
     usernameError.value = 'Please enter a username';
     return;
@@ -307,12 +296,6 @@ async function save() {
     return;
   }
   
-  // Validate username format
-/*   if (!rules.alphanumeric(editedItem.value.username)) {
-    usernameError.value = 'Username can only contain letters and numbers';
-    return;
-  } */
-  
   try {
     loading.value = true;
     await mqttService.createClient({
@@ -321,8 +304,7 @@ async function save() {
     });
     showSuccess('Client created successfully');
   } catch (error) {
-    showError('Failed to Add New Client');
-   /*  console.error('Error:', error); */
+    showError('Failed to create client');
   } finally {
     loading.value = false;
     closeDialog();
@@ -339,23 +321,22 @@ async function handleDeleteClient() {
   try {
     loading.value = true;
     await mqttService.deleteClient(selectedClient.value.username);
+    showSuccess('Client deleted successfully');
   } catch (error) {
-    showError('Failed to Delete Client');
-    /* console.error('Error:', error); */
+    showError('Failed to delete client');
   } finally {
     loading.value = false;
     closeDialog();
   }
 }
 
-//role management
+// Role Management
 async function fetchRoles() {
   try {
     const roles = await mqttService.getRoles();
     availableRoles.value = roles;
   } catch (error) {
     showError('Failed to fetch roles');
-   /*  console.error('Error:', error); */
   }
 }
 
@@ -369,8 +350,7 @@ async function openRoleManagement(client) {
       roleDialog.value = true;
     }
   } catch (error) {
-    showNotification('Failed to fetch client details', 'error');
-    /* console.error('Error:', error); */
+    showError('Failed to fetch client details');
   } finally {
     loading.value = false;
   }
@@ -381,9 +361,9 @@ async function addRoleToClient() {
   try {
     loading.value = true;
     await mqttService.addRoleToClient(selectedClient.value.username, selectedRole.value);
+    showSuccess('Role added successfully');
   } catch (error) {
-    /* console.error('Error fetching clients:', error); */
-    showNotification('Failed to Assign Role to Client', 'error');
+    showError('Failed to assign role');
   } finally {
     loading.value = false;
     closeDialog();
@@ -394,16 +374,16 @@ async function removeRoleFromClient(username, roleName) {
   try {
     loading.value = true;
     await mqttService.removeRoleFromClient(username, roleName);
+    showSuccess('Role removed successfully');
   } catch (error) {
-    /* console.error('Error fetching clients:', error); */
-    showNotification('Failed to Remove Role from Client', 'error');
+    showError('Failed to remove role');
   } finally {
     loading.value = false;
     closeDialog();
   }
 }
 
-// group management
+// Group Management
 async function fetchGroups() {
   try {
     loading.value = true;
@@ -411,18 +391,24 @@ async function fetchGroups() {
     availableGroups.value = groups;
   } catch (error) {
     showError('Failed to fetch groups');
-    /* console.error('Error:', error); */
   } finally {
     loading.value = false;
   }
 }
 
 async function openGroupAssignment(client) {
-  const success = await mqttService.getClient(client.username);
-  if (success) {
-    selectedClient.value = success.client;
-    await fetchGroups();
-    groupDialog.value = true;
+  try {
+    loading.value = true;
+    const success = await mqttService.getClient(client.username);
+    if (success) {
+      selectedClient.value = success.client;
+      await fetchGroups();
+      groupDialog.value = true;
+    }
+  } catch (error) {
+    showError('Failed to fetch client details');
+  } finally {
+    loading.value = false;
   }
 }
 
@@ -435,9 +421,9 @@ async function assignClientToGroup() {
       selectedClient.value.username,
       groupPriority.value ? parseInt(groupPriority.value) : null
     );
+    showSuccess('Client assigned to group successfully');
   } catch (error) {
-    showError('Failed to Assign Client to Group');
-    /* console.error('Error:', error); */
+    showError('Failed to assign client to group');
   } finally {
     loading.value = false;
     closeDialog();
@@ -448,46 +434,27 @@ async function removeClientFromGroup(groupName, username) {
   try {
     loading.value = true;
     await mqttService.removeClientFromGroup(groupName, username);
+    showSuccess('Client removed from group successfully');
   } catch (error) {
-    showError('Failed to Remove Client from Group');
-    /* console.error('Error:', error); */
+    showError('Failed to remove client from group');
   } finally {
     loading.value = false;
     closeDialog();
   }
 }
 
-const api = axios.create({
-  baseURL: import.meta.env.VITE_EVENT_API_URL,
-  headers: {
-    'Content-Type': 'application/json',
-    'X-API-Key': import.meta.env.VITE_API_KEY
-  }
-});
-
+// Enable/Disable Client
 const enableClient = async (username) => {
   try {
-    const encodedUsername = encodeURIComponent(username);
-    await api.post(`/enable/${encodedUsername}`);
-    await fetchEvents();
-    showNotification(`Client "${username}" has been successfully enabled`);
+    await api.post(`/enable/${encodeURIComponent(username)}`);
+    showSuccess(`Client "${username}" enabled successfully`);
+    await fetchClients();
   } catch (error) {
-    console.error('Error enabling client:', error);
-    showNotification('Failed to enable client. Please try again.', 'error');
+    showError('Failed to enable client');
   }
 };
 
-const fetchEvents = async () => {
-  loading.value = true;
-  try {
-    const response = await api.get('/events');
-    events.value = response.data.events;
-  } catch (error) {
-    console.error('Error fetching MQTT events:', error);
-    showNotification('Failed to fetch events. Please try again.', 'error');
-  } finally {
-    loading.value = false;
-  }
-};
-
+onMounted(async () => {
+  await fetchClients();
+});
 </script>
