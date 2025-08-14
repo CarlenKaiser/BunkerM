@@ -1,18 +1,15 @@
-// Enhanced dashboard with window-based trends
+<!-- Copyright (c) 2025 BunkerM -->
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, ComputedRef } from 'vue'
 import WidgetFive from './components/WidgetFive.vue'
 import UniqueVisitor from './components/UniqueVisitor.vue'
 import { generateNonce } from '../../utils/security'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useAuthStore } from '@/stores/auth'
 
-const authStore = useAuthStore()
-const config = getRuntimeConfig()
-
-// API configuration
-const API_BASE_URL = config.MONITOR_API_URL
-
+// =========================
+// Types
+// =========================
 interface ByteStats {
   timestamps: string[]
   bytes_received: number[]
@@ -35,160 +32,79 @@ interface Stats {
   connection_error?: string
 }
 
-interface TimeWindow {
-  label: string
-  value: string
-  hours: number
+interface FilteredStats {
+  bytes: ByteStats
+  messages: number
+  subs: number
+  clients: number
 }
 
+type RangeOption = '6hr' | 'daily'
+
+// =========================
+// Setup
+// =========================
+const authStore = useAuthStore()
+const config = getRuntimeConfig()
+const API_BASE_URL: string = config.MONITOR_API_URL
+
+// Default stats object
 const defaultStats: Stats = {
   total_messages_received: "0",
   total_subscriptions: 0,
   retained_messages: 0,
   total_connected_clients: 0,
-  bytes_stats: {
-    timestamps: [],
-    bytes_received: [],
-    bytes_sent: []
-  },
-  daily_message_stats: {
-    dates: [],
-    counts: []
-  },
+  bytes_stats: { timestamps: [], bytes_received: [], bytes_sent: [] },
+  daily_message_stats: { dates: [], counts: [] },
   mqtt_connected: false
 }
 
-// Component state
+// =========================
+// State
+// =========================
 const stats = ref<Stats>({ ...defaultStats })
-const selectedTimeWindow = ref<string>('6h')
 const error = ref<string | null>(null)
-const isLoading = ref(false)
+const isLoading = ref<boolean>(false)
 let intervalId: number | null = null
 
-// Time window options
-const timeWindows: TimeWindow[] = [
-  { label: '1 Hour', value: '1h', hours: 1 },
-  { label: '6 Hours', value: '6h', hours: 6 },
-  { label: '24 Hours', value: '24h', hours: 24 },
-  { label: '7 Days', value: '7d', hours: 168 }
-]
+// Trends
+const messagesTrend = ref<number>(0)
+const subscriptionsTrend = ref<number>(0)
+const clientsTrend = ref<number>(0)
 
+// Track previous window totals
+const previousWindowStats = ref<{ messages: number; subs: number; clients: number } | null>(null)
+
+// Range selection
+const selectedRange = ref<RangeOption>('6hr')
+
+// =========================
 // Helper functions
-const parseNumber = (numStr: string): number => {
-  const cleaned = numStr.toString().replace(/[,\s]/g, '')
-  const parsed = parseFloat(cleaned)
-  
-  if (isNaN(parsed)) {
-    console.warn(`Failed to parse number: "${numStr}"`)
-    return 0
-  }
-  
-  return parsed
-}
+// =========================
+const parseNumber = (numStr: string): number =>
+  parseFloat(numStr.replace(/,/g, ''))
 
 const calculateTrend = (previous: number, current: number): number => {
-  if (previous === 0 && current === 0) return 0
-  if (previous === 0 && current > 0) return 100
-  if (previous > 0 && current === 0) return -100
+  if (previous === 0) return 0
   return Math.round(((current - previous) / previous) * 100)
 }
 
-const getCurrentTimeWindow = (): TimeWindow => {
-  return timeWindows.find(w => w.value === selectedTimeWindow.value) || timeWindows[1]
-}
+const sumArray = (arr: number[]): number =>
+  arr.reduce((a, b) => a + b, 0)
 
-interface WindowDataPoint {
-  timestamp: string
-  value: number
-}
+// =========================
+// Computed: filtered stats based on selected range
+// =========================
+const filteredStats: ComputedRef<FilteredStats> = computed((): FilteredStats => {
+  const byteStats: ByteStats = stats.value.bytes_stats
+  const messageStats: DailyMessageStats = stats.value.daily_message_stats
 
-interface TrendResult {
-  messagesTrend: number
-  subscriptionsTrend: number
-  clientsTrend: number
-}
+  if (selectedRange.value === '6hr') {
+    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000)
+    const sixHourBytes: ByteStats = { timestamps: [], bytes_received: [], bytes_sent: [] }
 
-// Calculate trends based on selected time window
-const calculateWindowBasedTrends = (): TrendResult => {
-  const currentWindow = getCurrentTimeWindow()
-  const cutoffTime = new Date(Date.now() - currentWindow.hours * 60 * 60 * 1000)
-  
-  const byteStats = stats.value.bytes_stats
-  
-  // For byte-based trends (messages received/sent)
-  const getWindowStats = (timestamps: string[], values: number[]): WindowDataPoint[] => {
-    const windowData = timestamps
-      .map((ts: string, i: number): WindowDataPoint => ({ timestamp: ts, value: values[i] || 0 }))
-      .filter((item: WindowDataPoint): boolean => {
-        try {
-          const date = new Date(item.timestamp.includes('T') 
-            ? (item.timestamp.endsWith('Z') || item.timestamp.includes('+') ? item.timestamp : item.timestamp + 'Z')
-            : item.timestamp + ' UTC'
-          )
-          return date >= cutoffTime && !isNaN(date.getTime())
-        } catch {
-          return false
-        }
-      })
-      .sort((a: WindowDataPoint, b: WindowDataPoint): number => 
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-      )
-    
-    return windowData
-  }
-  
-  // Calculate message trends from byte stats
-  let messagesTrend = 0
-  if (byteStats.timestamps?.length > 0 && byteStats.bytes_received?.length > 0) {
-    const windowData = getWindowStats(byteStats.timestamps, byteStats.bytes_received)
-    
-    if (windowData.length >= 2) {
-      const firstHalf = windowData.slice(0, Math.floor(windowData.length / 2))
-      const secondHalf = windowData.slice(Math.floor(windowData.length / 2))
-      
-      const firstAvg = firstHalf.reduce((sum: number, item: WindowDataPoint): number => sum + item.value, 0) / firstHalf.length
-      const secondAvg = secondHalf.reduce((sum: number, item: WindowDataPoint): number => sum + item.value, 0) / secondHalf.length
-      
-      messagesTrend = calculateTrend(firstAvg, secondAvg)
-    }
-  }
-  
-  // Calculate subscription trends (use current vs previous poll)
-  // This is trickier as we need to maintain a history of subscription counts
-  const subscriptionsTrend = 0 // Will be calculated from polling history
-  
-  // Calculate client trends (similar to subscriptions)
-  const clientsTrend = 0 // Will be calculated from polling history
-  
-  return {
-    messagesTrend,
-    subscriptionsTrend,
-    clientsTrend
-  }
-}
-
-interface VisitorStatsResult {
-  fullStats: ByteStats
-  windowStats: ByteStats
-  selectedWindow: TimeWindow
-}
-
-// Enhanced visitor stats computation
-const visitorStats = computed((): VisitorStatsResult => {
-  const byteStats = stats.value.bytes_stats
-  const currentWindow = getCurrentTimeWindow()
-  const windowAgo = new Date(Date.now() - currentWindow.hours * 60 * 60 * 1000)
-  
-  const windowStats: ByteStats = {
-    timestamps: [],
-    bytes_received: [],
-    bytes_sent: []
-  }
-
-  if (byteStats.timestamps?.length) {
-    byteStats.timestamps.forEach((ts: string, i: number): void => {
+    byteStats.timestamps.forEach((ts: string, i: number) => {
       let timestampDate: Date
-      
       try {
         if (ts.includes('T')) {
           timestampDate = ts.endsWith('Z') || ts.includes('+') || (ts.match(/:/g) || []).length > 2
@@ -197,108 +113,50 @@ const visitorStats = computed((): VisitorStatsResult => {
         } else {
           timestampDate = new Date(ts + ' UTC')
         }
-        
-        if (isNaN(timestampDate.getTime())) {
-          console.warn(`Invalid timestamp: ${ts}`)
-          return
+
+        if (!isNaN(timestampDate.getTime()) && timestampDate >= sixHoursAgo) {
+          sixHourBytes.timestamps.push(ts)
+          sixHourBytes.bytes_received.push(byteStats.bytes_received[i])
+          sixHourBytes.bytes_sent.push(byteStats.bytes_sent[i])
         }
-        
-        if (timestampDate >= windowAgo && 
-            i < byteStats.bytes_received.length && 
-            i < byteStats.bytes_sent.length) {
-          windowStats.timestamps.push(ts)
-          windowStats.bytes_received.push(byteStats.bytes_received[i])
-          windowStats.bytes_sent.push(byteStats.bytes_sent[i])
-        }
-      } catch (error) {
-        console.warn(`Error parsing timestamp ${ts}:`, error)
+      } catch {
+        // Ignore bad timestamps
       }
     })
-  }
-  
-  return {
-    fullStats: byteStats,
-    windowStats,
-    selectedWindow: currentWindow
-  }
-})
 
-// Computed trends based on window
-const windowBasedTrends = computed(() => {
-  return calculateWindowBasedTrends()
-})
-
-// Watch for time window changes and recalculate
-watch(selectedTimeWindow, () => {
-  // Trends will be automatically recalculated via computed property
-  console.log(`Time window changed to: ${getCurrentTimeWindow().label}`)
-})
-
-interface PollingHistoryEntry {
-  timestamp: Date
-  stats: Stats
-}
-
-interface HistoryBasedTrends {
-  subscriptionsTrend: number
-  clientsTrend: number
-}
-
-// Maintain polling history for subscription/client trends
-const pollingHistory = ref<PollingHistoryEntry[]>([])
-const MAX_HISTORY_SIZE = 100
-
-const addToHistory = (newStats: Stats): void => {
-  pollingHistory.value.push({
-    timestamp: new Date(),
-    stats: { ...newStats }
-  })
-  
-  // Keep only recent history
-  if (pollingHistory.value.length > MAX_HISTORY_SIZE) {
-    pollingHistory.value = pollingHistory.value.slice(-MAX_HISTORY_SIZE)
-  }
-}
-
-// Calculate trends from polling history
-const calculateHistoryBasedTrends = (): HistoryBasedTrends => {
-  const currentWindow = getCurrentTimeWindow()
-  const cutoffTime = new Date(Date.now() - currentWindow.hours * 60 * 60 * 1000)
-  
-  const windowHistory = pollingHistory.value.filter((h: PollingHistoryEntry): boolean => h.timestamp >= cutoffTime)
-  
-  if (windowHistory.length < 2) return { subscriptionsTrend: 0, clientsTrend: 0 }
-  
-  const midPoint = Math.floor(windowHistory.length / 2)
-  const firstHalf = windowHistory.slice(0, midPoint)
-  const secondHalf = windowHistory.slice(midPoint)
-  
-  // Calculate averages for each half
-  const firstSubsAvg = firstHalf.reduce((sum: number, h: PollingHistoryEntry): number => sum + h.stats.total_subscriptions, 0) / firstHalf.length
-  const secondSubsAvg = secondHalf.reduce((sum: number, h: PollingHistoryEntry): number => sum + h.stats.total_subscriptions, 0) / secondHalf.length
-  
-  const firstClientsAvg = firstHalf.reduce((sum: number, h: PollingHistoryEntry): number => sum + h.stats.total_connected_clients, 0) / firstHalf.length
-  const secondClientsAvg = secondHalf.reduce((sum: number, h: PollingHistoryEntry): number => sum + h.stats.total_connected_clients, 0) / secondHalf.length
-  
-  return {
-    subscriptionsTrend: calculateTrend(firstSubsAvg, secondSubsAvg),
-    clientsTrend: calculateTrend(firstClientsAvg, secondClientsAvg)
-  }
-}
-
-// Combined trends computation
-const allTrends = computed(() => {
-  const windowTrends = windowBasedTrends.value
-  const historyTrends = calculateHistoryBasedTrends()
-  
-  return {
-    messagesTrend: windowTrends.messagesTrend,
-    subscriptionsTrend: historyTrends.subscriptionsTrend,
-    clientsTrend: historyTrends.clientsTrend
+    return {
+      bytes: sixHourBytes,
+      messages: sumArray(sixHourBytes.bytes_received), // Using bytes as proxy for message count
+      subs: stats.value.total_subscriptions,
+      clients: stats.value.total_connected_clients
+    }
+  } else {
+    // Daily
+    const dailyTotal = sumArray(messageStats.counts)
+    return {
+      bytes: byteStats,
+      messages: dailyTotal,
+      subs: stats.value.total_subscriptions,
+      clients: stats.value.total_connected_clients
+    }
   }
 })
 
-// Fetch stats function
+// =========================
+// Watch: recalc trends when filtered stats change
+// =========================
+watch(filteredStats, (curr: FilteredStats) => {
+  if (previousWindowStats.value) {
+    messagesTrend.value = calculateTrend(previousWindowStats.value.messages, curr.messages)
+    subscriptionsTrend.value = calculateTrend(previousWindowStats.value.subs, curr.subs)
+    clientsTrend.value = calculateTrend(previousWindowStats.value.clients, curr.clients)
+  }
+  previousWindowStats.value = { ...curr }
+})
+
+// =========================
+// Fetch API data
+// =========================
 const fetchStats = async (): Promise<void> => {
   isLoading.value = true
   try {
@@ -306,27 +164,20 @@ const fetchStats = async (): Promise<void> => {
     const nonce = generateNonce()
 
     const headers: Record<string, string> = {
-      'Accept': 'application/json',
+      Accept: 'application/json',
       'Content-Type': 'application/json'
     }
-
     if (authStore.token) {
       headers['Authorization'] = `Bearer ${authStore.token}`
     }
 
-    const response = await fetch(
+    const response: Response = await fetch(
       `${API_BASE_URL}/stats?nonce=${nonce}&timestamp=${timestamp}`,
-      {
-        method: 'GET',
-        headers,
-        credentials: 'include'
-      }
+      { method: 'GET', headers, credentials: 'include' }
     )
 
     if (!response.ok) {
-      const errorData = await response.json().catch((): Record<string, unknown> => ({}))
-      console.error('API Error:', response.status, errorData)
-
+      const errorData: Partial<{ message: string }> = await response.json().catch(() => ({}))
       switch (response.status) {
         case 401:
           throw new Error('Session expired. Please login again.')
@@ -335,28 +186,17 @@ const fetchStats = async (): Promise<void> => {
         case 429:
           throw new Error('Too many requests. Please slow down.')
         default:
-          throw new Error(errorData.message as string || `API request failed with status ${response.status}`)
+          throw new Error(errorData.message || `API request failed with status ${response.status}`)
       }
     }
 
-    const data = await response.json()
-    const newStats: Stats = {
-      ...defaultStats,
-      ...data,
-      mqtt_connected: data.mqtt_connected || false
-    }
-
-    stats.value = newStats
-    addToHistory(newStats)
+    const data: Stats = await response.json()
+    stats.value = { ...defaultStats, ...data, mqtt_connected: data.mqtt_connected || false }
 
     if (!data.mqtt_connected && data.connection_error) {
       error.value = data.connection_error
-    } else {
-      error.value = null
     }
-
-  } catch (err) {
-    console.error('Fetch error:', err)
+  } catch (err: unknown) {
     error.value = err instanceof Error ? err.message : 'Failed to load dashboard data'
     stats.value = { ...defaultStats }
   } finally {
@@ -364,10 +204,12 @@ const fetchStats = async (): Promise<void> => {
   }
 }
 
-// Lifecycle hooks
+// =========================
+// Lifecycle
+// =========================
 onMounted((): void => {
   fetchStats()
-  intervalId = window.setInterval(fetchStats, 30000) // Increased to 30 seconds
+  intervalId = window.setInterval(fetchStats, 2000)
 })
 
 onUnmounted((): void => {
@@ -380,51 +222,14 @@ onUnmounted((): void => {
 
 <template>
   <div class="dashboard-container">
-    <!-- Time Window Selector -->
-    <v-card class="mb-4" elevation="0" variant="outlined">
-      <v-card-text class="py-3">
-        <div class="d-flex align-items-center justify-space-between flex-wrap">
-          <h6 class="text-h6 mb-0">Dashboard View</h6>
-          <v-chip-group
-            v-model="selectedTimeWindow"
-            color="primary"
-            selected-class="text-primary"
-            mandatory
-          >
-            <v-chip
-              v-for="window in timeWindows"
-              :key="window.value"
-              :value="window.value"
-              variant="outlined"
-              size="small"
-            >
-              {{ window.label }}
-            </v-chip>
-          </v-chip-group>
-        </div>
-        <v-divider class="mt-3 mb-2"></v-divider>
-        <div class="text-caption text-medium-emphasis">
-          Showing trends and data for the last {{ getCurrentTimeWindow().label.toLowerCase() }}
-          • Updates every 30 seconds
-        </div>
-      </v-card-text>
-    </v-card>
-
     <!-- Connection status alert -->
-    <v-alert 
-      v-if="!stats.mqtt_connected"
-      type="warning"
-      variant="tonal"
-      class="mb-4"
-    >
+    <v-alert v-if="!stats.mqtt_connected" type="warning" variant="tonal" class="mb-4">
       MQTT Broker is disconnected. Some data may not be current.
-      <template v-if="error">
-        <br>{{ error }}
-      </template>
+      <template v-if="error"><br>{{ error }}</template>
     </v-alert>
 
     <!-- Error alert -->
-    <v-alert 
+    <v-alert
       v-if="error && stats.mqtt_connected"
       type="error"
       variant="tonal"
@@ -444,24 +249,22 @@ onUnmounted((): void => {
       class="loading-bar"
     ></v-progress-linear>
 
-    <!-- MQTT Stats Cards with Window-based Trends -->
-    <WidgetFive 
+    <!-- MQTT Stats Cards -->
+    <WidgetFive
       :total-messages-received="stats.total_messages_received"
-      :total-connected-clients="stats.total_connected_clients" 
+      :total-connected-clients="stats.total_connected_clients"
       :total-subscriptions="stats.total_subscriptions"
-      :retained-messages="stats.retained_messages" 
-      :messages-trend="allTrends.messagesTrend"
-      :subscriptions-trend="allTrends.subscriptionsTrend"
-      :clients-trend="allTrends.clientsTrend"
-      :loading="isLoading"
+      :retained-messages="stats.retained_messages"
+      :messages-trend="messagesTrend"
+      :subscriptions-trend="subscriptionsTrend"
+      :clients-trend="clientsTrend"
+      @range-change="(range: RangeOption) => selectedRange.value = range"
     />
 
     <v-row>
-      <!-- Message Rates Chart with Selected Window -->
+      <!-- Message Rates Chart -->
       <v-col cols="12">
-        <UniqueVisitor 
-          :stats="visitorStats" 
-        />
+        <UniqueVisitor :stats="filteredStats.bytes" />
       </v-col>
     </v-row>
   </div>
@@ -485,7 +288,5 @@ onUnmounted((): void => {
   left: 0;
   right: 0;
   z-index: 100;
-  margin: 0;
-  padding: 0;
 }
 </style>
