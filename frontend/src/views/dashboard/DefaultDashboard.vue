@@ -1,7 +1,7 @@
 <!-- Copyright (c) 2025 BunkerM -->
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import WidgetFive from './components/WidgetFive.vue';
 import UniqueVisitor from './components/UniqueVisitor.vue';
 import { generateNonce } from '../../utils/security';
@@ -53,13 +53,11 @@ const defaultStats: Stats = {
 
 const stats = ref<Stats>({ ...defaultStats });
 const error = ref<string | null>(null);
-const loading = ref(false);
+const isLoading = ref(false);
 let intervalId: number | null = null;
 
 const fetchStats = async () => {
-  loading.value = true;
-  error.value = null;
-
+  isLoading.value = true;
   try {
     const timestamp = Date.now() / 1000;
     const nonce = generateNonce();
@@ -115,13 +113,13 @@ const fetchStats = async () => {
     error.value = err instanceof Error ? err.message : 'Failed to load dashboard data';
     stats.value = { ...defaultStats };
   } finally {
-    loading.value = false;
+    isLoading.value = false;
   }
 };
 
 onMounted(() => {
   fetchStats();
-  intervalId = window.setInterval(fetchStats, 2000); // Changed to 2 seconds like the old version
+  intervalId = window.setInterval(fetchStats, 2000);
 });
 
 onUnmounted(() => {
@@ -159,7 +157,14 @@ onUnmounted(() => {
       {{ error }}
     </v-alert>
 
-    <!-- Loading state - removed the progress bar from here -->
+    <!-- Loading indicator - matches original behavior -->
+    <v-progress-linear
+      v-if="isLoading"
+      indeterminate
+      color="primary"
+      height="2"
+      class="loading-bar"
+    ></v-progress-linear>
 
     <!-- MQTT Stats Cards -->
     <WidgetFive 
@@ -167,7 +172,6 @@ onUnmounted(() => {
       :total-connected-clients="stats.total_connected_clients" 
       :total-subscriptions="stats.total_subscriptions"
       :retained-messages="stats.retained_messages" 
-      :loading="loading"
     />
 
     <v-row>
@@ -175,7 +179,6 @@ onUnmounted(() => {
       <v-col cols="12">
         <UniqueVisitor 
           :byte-stats="stats.bytes_stats" 
-          :loading="loading"
         />
       </v-col>
     </v-row>
@@ -187,9 +190,20 @@ onUnmounted(() => {
   padding: 1rem;
   max-width: 1800px;
   margin: 0 auto;
+  position: relative;
 }
 
 .mb-4 {
   margin-bottom: 1rem;
+}
+
+.loading-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  margin: 0;
+  padding: 0;
 }
 </style>

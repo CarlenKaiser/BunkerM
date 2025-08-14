@@ -8,14 +8,9 @@
 # app/dynsec/main.py
 import logging
 from fastapi import FastAPI, HTTPException, Security, Depends, Request, status, UploadFile, File, Form
-from fastapi.security.api_key import APIKeyHeader
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-
-""" from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from fastapi.responses import JSONResponse """
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import subprocess
@@ -30,14 +25,28 @@ from logging.handlers import RotatingFileHandler
 from pydantic import BaseModel, Field
 from password_import import router as password_import_router
 import uvicorn
+import firebase_admin
+from firebase_admin import auth, credentials, exceptions as firebase_exceptions
+
 # Load environment variables from .env file
 load_dotenv()
 
+# Initialize Firebase Admin SDK
+try:
+    firebase_config_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
+    if not firebase_config_path or not os.path.exists(firebase_config_path):
+        raise ValueError("Firebase credentials file not found at specified path")
+    
+    cred = credentials.Certificate(firebase_config_path)
+    firebase_admin.initialize_app(cred)
+    logger.info("Firebase initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize Firebase: {e}")
+    raise
 
 class RequestParams(BaseModel):
     nonce: Optional[str] = None
     timestamp: Optional[int] = None
-
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -52,8 +61,6 @@ MOSQUITTO_ADMIN_USERNAME = os.getenv("MOSQUITTO_ADMIN_USERNAME")
 MOSQUITTO_ADMIN_PASSWORD = os.getenv("MOSQUITTO_ADMIN_PASSWORD")
 MOSQUITTO_IP = os.getenv("MOSQUITTO_IP")
 MOSQUITTO_PORT = os.getenv("MOSQUITTO_PORT")
-API_KEY = os.getenv("API_KEY")
-
 ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost").split(",")
 
 # Base command for mosquitto_ctrl
@@ -86,20 +93,30 @@ app.add_middleware(
 # Trusted Host middleware
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
-# API Key security
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+# Firebase security
+security = HTTPBearer()
 
-# Import mosquitto password file
-app.include_router(password_import_router, prefix="/api/v1")
-
-async def get_api_key(api_key_header: str = Security(api_key_header)):
-    if api_key_header != API_KEY:
-        logger.warning(f"Invalid API key attempt")
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security)):
+    try:
+        if not credentials.scheme == "Bearer":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid authentication scheme"
+            )
+        
+        # Verify the Firebase ID token
+        decoded_token = auth.verify_id_token(credentials.credentials)
+        return decoded_token
+    except firebase_exceptions.InvalidIdTokenError:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API Key"
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid authentication token"
         )
-    return api_key_header
-
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e)
+        )
 
 async def log_request(request: Request):
     """Log API request details"""
@@ -109,7 +126,6 @@ async def log_request(request: Request):
         f"User-Agent: {request.headers.get('user-agent')} "
         f"Time: {datetime.now().isoformat()}"
     )
-
 
 @app.middleware("https")
 async def add_security_headers(request: Request, call_next):
@@ -122,18 +138,15 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     return response
 
-
 # Models
 class ClientCreate(BaseModel):
     username: str
     password: str
 
-
 class ClientResponse(BaseModel):
     username: str
     message: str
     success: bool
-
 
 class RoleCreate(BaseModel):
     name: str
@@ -142,32 +155,26 @@ class RoleCreate(BaseModel):
     nonce: Optional[str] = None
     timestamp: Optional[int] = None
 
-
 class GroupCreate(BaseModel):
     name: str
     textname: Optional[str] = None
     roles: Optional[List[str]] = None
 
-
 class RoleAssignment(BaseModel):
     role_name: str
     priority: Optional[int] = 1
 
-
 class GroupClientAssignment(BaseModel):
     client_username: str
-
 
 # Define enums for ACL types and permissions
 class ACLType(str, Enum):
     PUBLISH = "publishClientSend"
     SUBSCRIBE = "subscribeLiteral"
 
-
 class Permission(str, Enum):
     ALLOW = "allow"
     DENY = "deny"
-
 
 # Model for ACL request
 class ACLRequest(BaseModel):
@@ -176,7 +183,6 @@ class ACLRequest(BaseModel):
         ..., description="ACL type (publishClientSend or subscribeLiteral)"
     )
     permission: str = Field(..., description="Permission (allow or deny)")
-
 
 # Mosquitto command execution with logging
 def execute_mosquitto_command(command: list, input_data: str = None) -> tuple[bool, str]:
@@ -204,7 +210,6 @@ def execute_mosquitto_command(command: list, input_data: str = None) -> tuple[bo
         logger.error(f"Error executing command: {str(e)}")
         return False, str(e)
 
-
 # Client management endpoints
 @app.post("/api/v1/clients", response_model=ClientResponse)
 async def create_client(
@@ -212,7 +217,7 @@ async def create_client(
     request: Request,
     nonce: Optional[str] = None,
     timestamp: Optional[int] = None,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     await log_request(request)
     logger.info(f"Creating new client with username: {client.username}")
@@ -273,16 +278,13 @@ async def create_client(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # List Clients Endpoint
 @app.get("/api/v1/clients")
 async def list_clients(
     request: Request,
-    nonce: Optional[str] = None,  # Make nonce optional
-    timestamp: Optional[
-        int
-    ] = None,  # Make timestamp optional and ensure it's an integer
-    api_key: str = Security(get_api_key),
+    nonce: Optional[str] = None,
+    timestamp: Optional[int] = None,
+    user: dict = Depends(get_current_user),
 ):
     """List all clients"""
     await log_request(request)
@@ -305,13 +307,12 @@ async def list_clients(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
 
-
 # Get Single Client Endpoint
 @app.get("/api/v1/clients/{username}")
 async def get_client(
     username: str,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Get details for a specific client"""
     await log_request(request)
@@ -383,13 +384,12 @@ async def get_client(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # Enable Client Endpoint
 @app.put("/api/v1/clients/{username}/enable")
 async def enable_client(
     username: str,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Enable a specific MQTT client"""
     await log_request(request)
@@ -415,13 +415,12 @@ async def enable_client(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # Disable Client Endpoint
 @app.put("/api/v1/clients/{username}/disable")
 async def disable_client(
     username: str,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Disable a specific MQTT client"""
     await log_request(request)
@@ -447,13 +446,12 @@ async def disable_client(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # Remove Client Endpoint
 @app.delete("/api/v1/clients/{username}")
 async def remove_client(
     username: str,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Remove a specific MQTT client"""
     await log_request(request)
@@ -479,17 +477,14 @@ async def remove_client(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # Role Management Endpoints
 @app.post("/api/v1/roles")
 async def create_role(
     role: RoleCreate,
     request: Request,
-    nonce: Optional[str] = None,  # Make nonce optional
-    timestamp: Optional[
-        int
-    ] = None,  # Make timestamp optional and ensure it's an integer
-    api_key: str = Security(get_api_key),
+    nonce: Optional[str] = None,
+    timestamp: Optional[int] = None,
+    user: dict = Depends(get_current_user),
 ):
     """Create a new role"""
     await log_request(request)
@@ -515,16 +510,13 @@ async def create_role(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # List Roles Endpoint
 @app.get("/api/v1/roles")
 async def list_roles(
     request: Request,
-    nonce: Optional[str] = None,  # Make nonce optional
-    timestamp: Optional[
-        int
-    ] = None,  # Make timestamp optional and ensure it's an integer
-    api_key: str = Security(get_api_key),
+    nonce: Optional[str] = None,
+    timestamp: Optional[int] = None,
+    user: dict = Depends(get_current_user),
 ):
     """List all clients"""
     await log_request(request)
@@ -548,13 +540,12 @@ async def list_roles(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # Get Role Details Endpoint
 @app.get("/api/v1/roles/{role_name}")
 async def get_role(
     role_name: str,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Get details for a specific role"""
     await log_request(request)
@@ -632,14 +623,13 @@ async def get_role(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # Role Assignment Endpoints
 @app.post("/api/v1/clients/{username}/roles")
 async def add_client_role(
     username: str,
     role: RoleAssignment,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Assign a role to a client"""
     await log_request(request)
@@ -667,14 +657,13 @@ async def add_client_role(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # Remove Role from Client
 @app.delete("/api/v1/clients/{username}/roles/{role_name}")
 async def remove_client_role(
     username: str,
     role_name: str,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Remove a role from a client"""
     await log_request(request)
@@ -702,14 +691,13 @@ async def remove_client_role(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # Add Role to Group
 @app.post("/api/v1/groups/{group_name}/roles")
 async def add_group_role(
     group_name: str,
     role: RoleAssignment,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Assign a role to a group"""
     await log_request(request)
@@ -739,14 +727,13 @@ async def add_group_role(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # Remove Role from Group
 @app.delete("/api/v1/groups/{group_name}/roles/{role_name}")
 async def remove_group_role(
     group_name: str,
     role_name: str,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Remove a role from a group"""
     await log_request(request)
@@ -774,13 +761,12 @@ async def remove_group_role(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # Group Management Endpoints
 @app.post("/api/v1/groups")
 async def create_group(
     group: GroupCreate,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Create a new group"""
     await log_request(request)
@@ -806,11 +792,10 @@ async def create_group(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 @app.get("/api/v1/groups")
 async def list_groups(
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """List all groups"""
     await log_request(request)
@@ -834,12 +819,11 @@ async def list_groups(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 @app.get("/api/v1/groups/{group_name}")
 async def get_group(
     group_name: str,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Get details for a specific group"""
     await log_request(request)
@@ -907,12 +891,11 @@ async def get_group(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 @app.delete("/api/v1/groups/{group_name}")
 async def delete_group(
     group_name: str,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Delete a specific group"""
     await log_request(request)
@@ -938,14 +921,13 @@ async def delete_group(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # Group Client Management Endpoints
 @app.post("/api/v1/groups/{group_name}/clients")
 async def add_client_to_group(
     group_name: str,
     data: dict,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Add a client to a group"""
     await log_request(request)
@@ -988,13 +970,12 @@ async def add_client_to_group(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 @app.delete("/api/v1/groups/{group_name}/clients/{username}")
 async def remove_client_from_group(
     group_name: str,
     username: str,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Remove a client from a group"""
     await log_request(request)
@@ -1024,14 +1005,13 @@ async def remove_client_from_group(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # ACL Management Endpoints
 @app.post("/api/v1/roles/{role_name}/acls")
 async def add_role_acl(
     role_name: str,
     acl: ACLRequest,
     request: Request,
-    api_key: str = Security(get_api_key),
+    user: dict = Depends(get_current_user),
 ):
     """Add an ACL to a role"""
     await log_request(request)
@@ -1081,22 +1061,30 @@ async def add_role_acl(
             detail=f"Internal server error: {str(e)}",
         )
 
-
 # remove role
 @app.delete("/api/v1/roles/{role_name}")
-async def delete_role(role_name: str, api_key: str = Security(get_api_key)):
+async def delete_role(
+    role_name: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    await log_request(request)
     command = ["deleteRole", role_name]
     success, result = execute_mosquitto_command(command)
     if not success:
         raise HTTPException(status_code=400, detail=result)
     return {"message": f"Role {role_name} deleted successfully"}
 
-
 @app.delete("/api/v1/roles/{role_name}/acls")
 async def remove_role_acl(
-    role_name: str, acl_type: ACLType, topic: str, api_key: str = Security(get_api_key)
+    role_name: str,
+    acl_type: ACLType,
+    topic: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
 ):
     try:
+        await log_request(request)
         logger.debug(f"Removing ACL from role {role_name}: {acl_type=}, {topic=}")
 
         command = ["removeRoleACL", role_name, str(acl_type.value), topic]
@@ -1114,7 +1102,6 @@ async def remove_role_acl(
         logger.error(f"Error removing ACL: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to remove ACL: {str(e)}")
 
-
 # Add a health check endpoint
 @app.get("/api/v1/health")
 async def health_check(request: Request):
@@ -1125,7 +1112,6 @@ async def health_check(request: Request):
         "timestamp": datetime.now().isoformat(),
         "version": "1.0.0",
     }
-
 
 if __name__ == "__main__":
     # Run the application
