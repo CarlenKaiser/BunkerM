@@ -1,37 +1,44 @@
 <!-- Copyright (c) 2025 BunkerM -->
-
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue';
-import WidgetFive from './components/WidgetFive.vue';
-import UniqueVisitor from './components/UniqueVisitor.vue';
-import { generateNonce } from '../../utils/security';
-import { getRuntimeConfig } from '@/config/runtime';
-import { useAuthStore } from '@/stores/auth';
+import { ref, onMounted, onUnmounted, computed } from 'vue'
+import WidgetFive from './components/WidgetFive.vue'
+import UniqueVisitor from './components/UniqueVisitor.vue'
+import { generateNonce } from '../../utils/security'
+import { getRuntimeConfig } from '@/config/runtime'
+import { useAuthStore } from '@/stores/auth'
 
-const authStore = useAuthStore();
-const config = getRuntimeConfig();
+const authStore = useAuthStore()
+const config = getRuntimeConfig()
 
 // API configuration
-const API_BASE_URL = config.MONITOR_API_URL;
+const API_BASE_URL = config.MONITOR_API_URL
 
 interface ByteStats {
-  timestamps: string[];
-  bytes_received: number[];
-  bytes_sent: number[];
+  timestamps: string[]
+  bytes_received: number[]
+  bytes_sent: number[]
+}
+
+interface DailyMessageStats {
+  dates: string[]
+  counts: number[]
 }
 
 interface Stats {
-  total_messages_received: string;
-  total_subscriptions: number;
-  retained_messages: number;
-  total_connected_clients: number;
-  bytes_stats: ByteStats;
-  daily_message_stats: {
-    dates: string[];
-    counts: number[];
-  };
-  mqtt_connected: boolean;
-  connection_error?: string;
+  total_messages_received: string
+  total_subscriptions: number
+  retained_messages: number
+  total_connected_clients: number
+  bytes_stats: ByteStats
+  daily_message_stats: DailyMessageStats
+  mqtt_connected: boolean
+  connection_error?: string
+}
+
+interface FilteredByteStats {
+  timestamps: string[]
+  bytes_received: number[]
+  bytes_sent: number[]
 }
 
 const defaultStats: Stats = {
@@ -49,62 +56,71 @@ const defaultStats: Stats = {
     counts: []
   },
   mqtt_connected: false
-};
+}
 
-const stats = ref<Stats>({ ...defaultStats });
-const error = ref<string | null>(null);
-const isLoading = ref(false);
-let intervalId: number | null = null;
+const stats = ref<Stats>({ ...defaultStats })
+const error = ref<string | null>(null)
+const isLoading = ref(false)
+let intervalId: number | null = null
 
-// Process the byte stats to ensure proper formatting for the last 6 hours view
+// Fixed computed property declaration
 const processedByteStats = computed(() => {
-  const byteStats = stats.value.bytes_stats;
+  const byteStats = stats.value.bytes_stats
   
-  // If no data, return empty structure
-  if (byteStats.timestamps.length === 0) {
-    return {
-      timestamps: [],
-      bytes_received: [],
-      bytes_sent: []
-    };
+  const defaultReturn: FilteredByteStats = {
+    timestamps: [],
+    bytes_received: [],
+    bytes_sent: []
   }
 
-  // Get current time and calculate 6 hours ago
-  const now = new Date();
-  const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+  if (!byteStats || 
+      !byteStats.timestamps || 
+      !byteStats.bytes_received || 
+      !byteStats.bytes_sent ||
+      byteStats.timestamps.length === 0) {
+    return defaultReturn
+  }
 
-  // Filter data to only include last 6 hours
-  const filteredData = {
-    timestamps: [] as string[],
-    bytes_received: [] as number[],
-    bytes_sent: [] as number[]
-  };
+  const now = new Date()
+  const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000)
+
+  const filteredData: FilteredByteStats = {
+    timestamps: [],
+    bytes_received: [],
+    bytes_sent: []
+  }
 
   byteStats.timestamps.forEach((timestamp: string, index: number) => {
-    const date = new Date(timestamp);
-    if (date >= sixHoursAgo) {
-      filteredData.timestamps.push(timestamp);
-      filteredData.bytes_received.push(byteStats.bytes_received[index]);
-      filteredData.bytes_sent.push(byteStats.bytes_sent[index]);
+    try {
+      const date = new Date(timestamp)
+      if (date >= sixHoursAgo && 
+          index < byteStats.bytes_received.length && 
+          index < byteStats.bytes_sent.length) {
+        filteredData.timestamps.push(timestamp)
+        filteredData.bytes_received.push(byteStats.bytes_received[index])
+        filteredData.bytes_sent.push(byteStats.bytes_sent[index])
+      }
+    } catch (e) {
+      console.warn('Error processing timestamp at index', index, e)
     }
-  });
+  })
 
-  return filteredData;
-});
+  return filteredData
+})
 
 const fetchStats = async () => {
-  isLoading.value = true;
+  isLoading.value = true
   try {
-    const timestamp = Date.now() / 1000;
-    const nonce = generateNonce();
+    const timestamp = Date.now() / 1000
+    const nonce = generateNonce()
 
     const headers: Record<string, string> = {
       'Accept': 'application/json',
       'Content-Type': 'application/json'
-    };
+    }
 
     if (authStore.token) {
-      headers['Authorization'] = `Bearer ${authStore.token}`;
+      headers['Authorization'] = `Bearer ${authStore.token}`
     }
 
     const response = await fetch(
@@ -114,56 +130,56 @@ const fetchStats = async () => {
         headers,
         credentials: 'include'
       }
-    );
+    )
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('API Error:', response.status, errorData);
+      const errorData = await response.json().catch(() => ({}))
+      console.error('API Error:', response.status, errorData)
 
       switch (response.status) {
         case 401:
-          throw new Error('Session expired. Please login again.');
+          throw new Error('Session expired. Please login again.')
         case 403:
-          throw new Error('You do not have permission to view these stats.');
+          throw new Error('You do not have permission to view these stats.')
         case 429:
-          throw new Error('Too many requests. Please slow down.');
+          throw new Error('Too many requests. Please slow down.')
         default:
-          throw new Error(errorData.message || `API request failed with status ${response.status}`);
+          throw new Error(errorData.message || `API request failed with status ${response.status}`)
       }
     }
 
-    const data = await response.json();
+    const data = await response.json()
     
     stats.value = {
       ...defaultStats,
       ...data,
       mqtt_connected: data.mqtt_connected || false
-    };
+    }
 
     if (!data.mqtt_connected && data.connection_error) {
-      error.value = data.connection_error;
+      error.value = data.connection_error
     }
 
   } catch (err) {
-    console.error('Fetch error:', err);
-    error.value = err instanceof Error ? err.message : 'Failed to load dashboard data';
-    stats.value = { ...defaultStats };
+    console.error('Fetch error:', err)
+    error.value = err instanceof Error ? err.message : 'Failed to load dashboard data'
+    stats.value = { ...defaultStats }
   } finally {
-    isLoading.value = false;
+    isLoading.value = false
   }
-};
+}
 
 onMounted(() => {
-  fetchStats();
-  intervalId = window.setInterval(fetchStats, 2000);
-});
+  fetchStats()
+  intervalId = window.setInterval(fetchStats, 2000)
+})
 
 onUnmounted(() => {
   if (intervalId) {
-    clearInterval(intervalId);
-    intervalId = null;
+    clearInterval(intervalId)
+    intervalId = null
   }
-});
+})
 </script>
 
 <template>
