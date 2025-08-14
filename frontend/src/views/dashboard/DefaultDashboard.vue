@@ -464,31 +464,6 @@ onUnmounted((): void => {
         />
       </v-col>
     </v-row>
-
-    <!-- Debug Info (remove in production) -->
-    <v-expansion-panels class="mt-4" v-if="process.env.NODE_ENV === 'development'">
-      <v-expansion-panel>
-        <v-expansion-panel-title>
-          <div class="d-flex align-items-center">
-            <v-icon>mdi-bug</v-icon>
-            <span class="ml-2">Debug Info</span>
-          </div>
-        </v-expansion-panel-title>
-        <v-expansion-panel-text>
-          <div class="text-caption">
-            <div><strong>Selected Window:</strong> {{ getCurrentTimeWindow().label }} ({{ getCurrentTimeWindow().hours }}h)</div>
-            <div><strong>Polling History:</strong> {{ pollingHistory.length }} entries</div>
-            <div><strong>Window Data Points:</strong> {{ visitorStats.windowStats.timestamps.length }}</div>
-            <div><strong>Calculated Trends:</strong></div>
-            <ul class="ml-4">
-              <li>Messages: {{ allTrends.messagesTrend }}%</li>
-              <li>Subscriptions: {{ allTrends.subscriptionsTrend }}%</li>
-              <li>Clients: {{ allTrends.clientsTrend }}%</li>
-            </ul>
-          </div>
-        </v-expansion-panel-text>
-      </v-expansion-panel>
-    </v-expansion-panels>
   </div>
 </template>
 
