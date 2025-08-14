@@ -16,6 +16,7 @@ limitations under the License. -->
 import { ref, onMounted, onUnmounted } from 'vue';
 import UiTitleCard from '@/components/shared/UiTitleCard.vue';
 import { mdiReload, mdiDownload, mdiMagnify, mdiClose } from '@mdi/js';
+import { useAuthStore } from '@/stores/auth';
 
 interface LogEntry {
   id: number;
@@ -30,6 +31,7 @@ interface LogData {
   message?: string;
 }
 
+const authStore = useAuthStore();
 const logs = ref<LogEntry[]>([]);
 const filteredLogs = ref<LogEntry[]>([]);
 const search = ref<string>('');
@@ -42,7 +44,18 @@ const levelFilter = ref<string>('all');
 const fetchLogs = async () => {
   isLoading.value = true;
   try {
-    const response = await fetch('/api/logs/broker');
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    
+    if (authStore.token) {
+      headers['Authorization'] = `Bearer ${authStore.token}`;
+    }
+
+    const response = await fetch('/api/logs/broker', {
+      headers
+    });
+    
     if (!response.ok) {
       throw new Error(`HTTP error! Status: ${response.status}`);
     }
@@ -87,7 +100,7 @@ const fetchLogs = async () => {
 
 // Apply filters to logs
 const applyFilters = () => {
-  filteredLogs.value = logs.value.filter(log => {
+  filteredLogs.value = logs.value.filter((log: LogEntry) => {  // <-- Add type annotation here
     // Apply search filter
     const searchMatch = search.value === '' || 
       log.message.toLowerCase().includes(search.value.toLowerCase());
@@ -126,7 +139,7 @@ const downloadLogs = () => {
   const csvHeader = 'Timestamp,Level,Message\n';
   
   // Create CSV rows with properly formatted timestamps
-  const csvRows = logs.value.map(log => {
+  const csvRows = logs.value.map((log: LogEntry) => {
     // Format the timestamp
     const timestamp = formatTimestamp(log.timestamp);
     
@@ -337,4 +350,4 @@ onUnmounted(() => {
   white-space: pre-wrap;
   word-break: break-word;
 }
-</style> 
+</style>
