@@ -1,13 +1,7 @@
-# Copyright (c) 2025 BunkerM
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# You may not use this file except in compliance with the License.
-# http://www.apache.org/licenses/LICENSE-2.0
-# Distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
-#
-# app/monitor/data_storage.py
+# Updated data_storage.py - Replace the add_hourly_data method
+
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 
 class HistoricalDataStorage:
@@ -58,7 +52,8 @@ class HistoricalDataStorage:
     def update_daily_messages(self, message_count: int):
         """Update daily message count"""
         data = self.load_data()
-        current_date = datetime.now().strftime('%Y-%m-%d')
+        # Use UTC for consistency
+        current_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         
         # Find today's entry
         found = False
@@ -76,7 +71,7 @@ class HistoricalDataStorage:
             })
 
         # Keep only last 7 days
-        cutoff_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        cutoff_date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
         data['daily_messages'] = [
             entry for entry in data['daily_messages']
             if entry['date'] >= cutoff_date
@@ -85,9 +80,10 @@ class HistoricalDataStorage:
         self.save_data(data)
 
     def add_hourly_data(self, bytes_received: float, bytes_sent: float):
-        """Add hourly byte rate data"""
+        """Add hourly byte rate data - FIXED to use UTC timestamps"""
         data = self.load_data()
-        current_time = datetime.now().isoformat()
+        # Use UTC time with explicit 'Z' suffix to indicate UTC
+        current_time = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
         
         data['hourly'].append({
             'timestamp': current_time,
@@ -95,14 +91,31 @@ class HistoricalDataStorage:
             'bytes_sent': bytes_sent
         })
         
-        # Keep only last 24 hours of data
-        cutoff_time = (datetime.now() - timedelta(hours=24)).isoformat()
+        # Keep only last 24 hours of data - use UTC for comparison
+        cutoff_time = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat().replace('+00:00', 'Z')
         data['hourly'] = [
             entry for entry in data['hourly']
-            if entry['timestamp'] >= cutoff_time
+            # Handle both old format and new format timestamps
+            if self._parse_timestamp(entry['timestamp']) >= self._parse_timestamp(cutoff_time)
         ]
         
         self.save_data(data)
+    
+    def _parse_timestamp(self, timestamp_str: str) -> datetime:
+        """Helper to parse timestamps consistently"""
+        try:
+            # Handle ISO format with Z suffix
+            if timestamp_str.endswith('Z'):
+                return datetime.fromisoformat(timestamp_str[:-1]).replace(tzinfo=timezone.utc)
+            # Handle ISO format with timezone
+            elif '+' in timestamp_str or timestamp_str.count(':') > 2:
+                return datetime.fromisoformat(timestamp_str)
+            # Handle simple format - assume UTC
+            else:
+                return datetime.fromisoformat(timestamp_str).replace(tzinfo=timezone.utc)
+        except:
+            # Fallback - assume UTC
+            return datetime.fromisoformat(timestamp_str.replace('Z', '')).replace(tzinfo=timezone.utc)
     
     def get_hourly_data(self):
         """Get hourly byte rate data"""

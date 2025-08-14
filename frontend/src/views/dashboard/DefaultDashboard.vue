@@ -64,9 +64,7 @@ let intervalId: number | null = null
 
 const visitorStats = computed(() => {
   const byteStats = stats.value.bytes_stats
-  console.log('Raw bytes_stats:', byteStats)
   const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000)
-  console.log('Six hours ago:', sixHoursAgo)
   
   const sixHourStats: ByteStats = {
     timestamps: [],
@@ -76,17 +74,46 @@ const visitorStats = computed(() => {
 
   if (byteStats.timestamps?.length) {
     byteStats.timestamps.forEach((ts: string, i: number) => {
-      const timestampDate = new Date(ts)
-      if (timestampDate >= sixHoursAgo && 
-          i < byteStats.bytes_received.length && 
-          i < byteStats.bytes_sent.length) {
-        sixHourStats.timestamps.push(ts)
-        sixHourStats.bytes_received.push(byteStats.bytes_received[i])
-        sixHourStats.bytes_sent.push(byteStats.bytes_sent[i])
+      let timestampDate: Date;
+      
+      try {
+        // Handle different timestamp formats consistently
+        if (ts.includes('T')) {
+          // ISO format - check if it has timezone info
+          if (ts.endsWith('Z') || ts.includes('+') || (ts.match(/:/g) || []).length > 2) {
+            // Has timezone info - parse directly
+            timestampDate = new Date(ts)
+          } else {
+            // No timezone info - treat as UTC
+            timestampDate = new Date(ts + 'Z')
+          }
+        } else {
+          // Simple format "YYYY-MM-DD HH:mm" - treat as UTC
+          timestampDate = new Date(ts + ' UTC')
+        }
+        
+        // Validate the parsed date
+        if (isNaN(timestampDate.getTime())) {
+          console.warn(`Invalid timestamp: ${ts}`)
+          return
+        }
+        
+        if (timestampDate >= sixHoursAgo && 
+            i < byteStats.bytes_received.length && 
+            i < byteStats.bytes_sent.length) {
+          sixHourStats.timestamps.push(ts)
+          sixHourStats.bytes_received.push(byteStats.bytes_received[i])
+          sixHourStats.bytes_sent.push(byteStats.bytes_sent[i])
+        }
+      } catch (error) {
+        console.warn(`Error parsing timestamp ${ts}:`, error)
       }
     })
   }
-  console.log('Filtered sixHourStats:', sixHourStats)
+
+  console.log(`Six hours ago: ${sixHoursAgo.toISOString()}`)
+  console.log(`Found ${sixHourStats.timestamps.length} data points in last 6 hours`)
+  
   return {
     fullStats: byteStats,
     sixHourStats
