@@ -60,28 +60,36 @@ const fetchLogs = async () => {
       throw new Error(`HTTP error! Status: ${response.status}`);
     }
     const data = await response.json();
+    console.log('Raw logs data:', data.logs.slice(0, 5));
     
     // Process log entries and sort by timestamp (newest first)
     logs.value = data.logs
       .map((log: string | LogData, index: number): LogEntry => {
-        // Extract timestamp and level from the log entry
-        const timestampMatch = typeof log === 'string' ? log.match(/^(\d+):/) : null;
-        const levelMatch = typeof log === 'string' ? log.match(/\[(INFO|WARNING|ERROR|DEBUG)\]/i) : null;
-        
-        // If log is a string (old format), parse it. Otherwise, use the new format
+        // Handle both string and object formats
         if (typeof log === 'string') {
-          const messageWithoutTimestamp = timestampMatch 
-            ? log.replace(/^\d+:\s*/, '') 
-            : log;
+          // Improved pattern for Mosquitto logs
+          const mosquittoPattern = /^(\d+):\s*(Warning|Error|Notice|Info|Debug)\s*:\s*(.*)/i;
+          const match = log.match(mosquittoPattern);
           
+          if (match) {
+            const [_, timestamp, level, message] = match;
+            return {
+              id: index,
+              timestamp: parseInt(timestamp, 10) * 1000,
+              level: level.toUpperCase(),
+              message: message.trim()
+            };
+          }
+          
+          // Fallback for other formats
           return {
             id: index,
-            timestamp: timestampMatch ? parseInt(timestampMatch[1], 10) * 1000 : null,
-            level: levelMatch ? levelMatch[1].toUpperCase() : 'INFO',
-            message: messageWithoutTimestamp
+            timestamp: null,
+            level: 'INFO',
+            message: log
           };
         } else {
-          // New format where log is an object
+          // Handle object format
           return {
             id: index,
             timestamp: log.timestamp ? new Date(log.timestamp).getTime() : null,
@@ -90,21 +98,15 @@ const fetchLogs = async () => {
           };
         }
       })
-      // Sort by timestamp in descending order (newest first)
-      .sort((a: LogEntry, b: LogEntry) => {
-        // Handle cases where timestamp might be null
-        const timeA = a.timestamp || 0;
-        const timeB = b.timestamp || 0;
-        return timeB - timeA; // Descending order
-      });
-    
-    applyFilters();
-  } catch (error) {
-    console.error('Error fetching broker logs:', error);
-  } finally {
-    isLoading.value = false;
-  }
-};
+      .sort((a: LogEntry, b: LogEntry) => (b.timestamp || 0) - (a.timestamp || 0));
+        
+        applyFilters();
+      } catch (error) {
+        console.error('Error fetching broker logs:', error);
+      } finally {
+        isLoading.value = false;
+      }
+    };
 
 // Apply filters to logs
 const applyFilters = () => {
@@ -261,7 +263,7 @@ onUnmounted(() => {
       
       <v-select
         v-model="levelFilter"
-        :items="['all', 'info', 'warning', 'error', 'debug']"
+        :items="['all', 'info', 'warning', 'error', 'debug', 'notice']"
         label="Log Level"
         variant="outlined"
         density="compact"
