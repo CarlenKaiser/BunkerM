@@ -21,7 +21,7 @@ interface ByteStats {
 }
 
 interface Stats {
-  total_messages_received: string; // Changed to string to match format_number output
+  total_messages_received: string;
   total_subscriptions: number;
   retained_messages: number;
   total_connected_clients: number;
@@ -57,8 +57,6 @@ const loading = ref(false);
 let intervalId: number | null = null;
 
 const fetchStats = async () => {
-  if (loading.value) return;
-  
   loading.value = true;
   error.value = null;
 
@@ -71,7 +69,6 @@ const fetchStats = async () => {
       'Content-Type': 'application/json'
     };
 
-    // Add auth header if using token-based auth
     if (authStore.token) {
       headers['Authorization'] = `Bearer ${authStore.token}`;
     }
@@ -81,7 +78,7 @@ const fetchStats = async () => {
       {
         method: 'GET',
         headers,
-        credentials: 'include' // Changed to 'include' if using cookies
+        credentials: 'include'
       }
     );
 
@@ -103,7 +100,6 @@ const fetchStats = async () => {
 
     const data = await response.json();
     
-    // Transform data if needed to match component expectations
     stats.value = {
       ...defaultStats,
       ...data,
@@ -117,21 +113,17 @@ const fetchStats = async () => {
   } catch (err) {
     console.error('Fetch error:', err);
     error.value = err instanceof Error ? err.message : 'Failed to load dashboard data';
-    
-    // Reset to default stats on error
     stats.value = { ...defaultStats };
   } finally {
     loading.value = false;
   }
 };
 
-// Start polling when component mounts
 onMounted(() => {
   fetchStats();
-  intervalId = window.setInterval(fetchStats, 15000); // 15 seconds
+  intervalId = window.setInterval(fetchStats, 2000); // Changed to 2 seconds like the old version
 });
 
-// Clean up when component unmounts
 onUnmounted(() => {
   if (intervalId) {
     clearInterval(intervalId);
@@ -167,13 +159,7 @@ onUnmounted(() => {
       {{ error }}
     </v-alert>
 
-    <!-- Loading state -->
-    <v-progress-linear
-      v-if="loading"
-      indeterminate
-      color="primary"
-      class="mb-4"
-    ></v-progress-linear>
+    <!-- Loading state - removed the progress bar from here -->
 
     <!-- MQTT Stats Cards -->
     <WidgetFive 
@@ -181,6 +167,7 @@ onUnmounted(() => {
       :total-connected-clients="stats.total_connected_clients" 
       :total-subscriptions="stats.total_subscriptions"
       :retained-messages="stats.retained_messages" 
+      :loading="loading"
     />
 
     <v-row>

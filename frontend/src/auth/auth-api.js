@@ -65,7 +65,7 @@ async function verifyFirebaseToken(req, res, next) {
   }
 }
 
-// Require admin role middleware - FIXED
+// Require admin role middleware
 async function requireAdmin(req, res, next) {
   try {
     // Fetch the user record to get fresh custom claims
@@ -190,7 +190,7 @@ app.put('/api/auth/users/:uid', verifyFirebaseToken, requireAdmin, async (req, r
 });
 
 // Delete a user (Admin only)
-app.delete('/api/auth/users/:uid', verifyFirebaseToken, requireAdmin, async (req, res) => {
+app.delete('/api/auth/users/:uid', verifyFirebaseToken, async (req, res) => {
   const { uid } = req.params;
 
   if (uid === req.firebaseUser.uid) {
@@ -270,6 +270,69 @@ app.delete('/api/auth/reset', verifyFirebaseToken, requireAdmin, async (req, res
   } catch (error) {
     log(`Error resetting all users: ${error.message}`);
     res.status(500).json({ error: 'Failed to reset all users', details: error.message });
+  }
+});
+
+// Broker logs endpoint - Added from old version
+app.get('/api/logs/broker', verifyFirebaseToken, requireAdmin, async (req, res) => {
+  try {
+    log('Getting broker logs');
+    const logPath = '/var/log/mosquitto/mosquitto.log';
+
+    if (!fs.existsSync(logPath)) {
+      log(`Broker log file not found at ${logPath}`);
+      return res.status(404).json({ error: 'Broker log file not found', logs: [] });
+    }
+
+    try {
+      // Read the last 1000 lines of the log file
+      const fileContent = fs.readFileSync(logPath, 'utf8');
+      const lines = fileContent.toString().split('\n');
+      const lastLines = lines.slice(-1000).filter(line => line.trim() !== '');
+
+      // Parse each line to extract timestamp and message
+      const logs = lastLines.map(line => {
+        const logLine = line.toString().trim();
+        if (!logLine) {
+          return null;
+        }
+
+        // Try to extract timestamp from the Mosquitto log format
+        // Example: 1709669577: New connection from 127.0.0.1:49816
+        const parts = logLine.split(': ', 2);
+        let timestamp = new Date().toISOString();
+        let message = logLine;
+
+        if (parts.length === 2) {
+          try {
+            // Convert Unix timestamp to ISO string if it's a number
+            const unixTimestamp = parseInt(parts[0], 10);
+            if (!isNaN(unixTimestamp)) {
+              timestamp = new Date(unixTimestamp * 1000).toISOString();
+              message = parts[1];
+            }
+          } catch (e) {
+            // If parsing fails, keep the defaults
+            log(`Error parsing timestamp: ${e.message}`);
+          }
+        }
+
+        return {
+          timestamp,
+          message
+        };
+      }).filter(entry => entry !== null);
+
+      res.json({ logs });
+    } catch (readError) {
+      log(`Error reading log file: ${readError.message}`);
+      console.error(readError);
+      res.status(500).json({ error: 'Error reading log file', logs: [] });
+    }
+  } catch (error) {
+    log(`Error in broker logs endpoint: ${error.message}`);
+    console.error(error);
+    res.status(500).json({ error: 'Internal server error', logs: [] });
   }
 });
 
