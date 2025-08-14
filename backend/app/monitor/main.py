@@ -14,7 +14,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from paho.mqtt import client as mqtt_client
-import threading
+import asyncio
 from typing import Dict, List, Optional
 from collections import deque
 from datetime import datetime, timedelta
@@ -28,6 +28,8 @@ import uvicorn
 from contextlib import asynccontextmanager
 import firebase_admin
 from firebase_admin import credentials, auth
+from functools import lru_cache
+import time
 
 # Environment variable loading
 try:
@@ -79,131 +81,122 @@ MONITORED_TOPICS = {
     "$SYS/broker/load/bytes/sent/15min": "bytes_sent_15min"
 }
 
+
+from functools import lru_cache
+import time
+
+# Add caching to reduce processing time
 class MQTTStats:
     def __init__(self):
-        self._lock = threading.Lock()
-        self.messages_sent = 0
-        self.subscriptions = 0
-        self.retained_messages = 0
-        self.connected_clients = 0
-        self.bytes_received_15min = 0.0
-        self.bytes_sent_15min = 0.0
-        self.message_counter = MessageCounter()
-        self.data_storage = HistoricalDataStorage()
-        self.last_storage_update = datetime.now()
-        self.messages_history = deque(maxlen=15)
-        self.published_history = deque(maxlen=15)
-        self.last_messages_sent = 0
-        self.last_update = datetime.now()
-        
-        # Add timestamp tracking for all metrics
-        self.metrics_timestamps = deque(maxlen=100)  # Store last 100 timestamps
-        self.messages_timestamps = deque(maxlen=100)
-        self.subscriptions_timestamps = deque(maxlen=100)
-        self.clients_timestamps = deque(maxlen=100)
-        self.retained_timestamps = deque(maxlen=100)
-        
-        for _ in range(15):
-            self.messages_history.append(0)
-            self.published_history.append(0)
+        # ... existing init code ...
+        self._stats_cache = {}
+        self._cache_ttl = 5  # Cache for 5 seconds
+        self._last_cache_time = 0
 
-    def format_number(self, number: int) -> str:
-        if number >= 1_000_000:
-            return f"{number/1_000_000:.1f}M"
-        elif number >= 1_000:
-            return f"{number/1_000:.1f}K"
-        return str(number)
-
-    def increment_user_messages(self):
-        with self._lock:
-            self.message_counter.increment_count()
-            # Record timestamp when messages are received
-            now = datetime.now().isoformat()
-            self.messages_timestamps.append(now)
-
-    def update_metric_timestamp(self, metric_type: str):
-        """Update timestamp for a specific metric type"""
-        now = datetime.now().isoformat()
-        with self._lock:
-            if metric_type == "subscriptions":
-                self.subscriptions_timestamps.append(now)
-            elif metric_type == "clients":
-                self.clients_timestamps.append(now)
-            elif metric_type == "retained":
-                self.retained_timestamps.append(now)
-            
-            # Always update general metrics timestamp
-            self.metrics_timestamps.append(now)
-
-    def update_storage(self):
-        now = datetime.now()
-        if (now - self.last_storage_update).total_seconds() >= 180:
-            try:
-                self.data_storage.add_hourly_data(
-                    float(self.bytes_received_15min),
-                    float(self.bytes_sent_15min)
-                )
-                self.last_storage_update = now
-            except Exception as e:
-                logger.error(f"Error updating storage: {e}")
-
-    def update_message_rates(self):
-        now = datetime.now()
-        if (now - self.last_update).total_seconds() >= 60:
-            with self._lock:
-                published_rate = max(0, self.messages_sent - self.last_messages_sent)
-                self.published_history.append(published_rate)
-                self.last_messages_sent = self.messages_sent
-                self.last_update = now
+    @lru_cache(maxsize=10)
+    def _get_cached_hourly_data(self, cache_key: str):
+        """Cached version of hourly data retrieval"""
+        return self.data_storage.get_hourly_data()
+    
+    @lru_cache(maxsize=10) 
+    def _get_cached_daily_data(self, cache_key: str):
+        """Cached version of daily data retrieval"""
+        return self.data_storage.get_daily_messages()
 
     def get_stats(self, include_timestamps: bool = False) -> Dict:
-        self.update_message_rates()
-        self.update_storage()
+        current_time = time.time()
+        cache_key = f"stats_{include_timestamps}_{int(current_time // self._cache_ttl)}"
         
-        with self._lock:
-            actual_subscriptions = max(0, self.subscriptions - 2)
-            actual_connected_clients = max(0, self.connected_clients - 1)
-            total_messages = self.message_counter.get_total_count()
-            hourly_data = self.data_storage.get_hourly_data()
-            daily_messages = self.data_storage.get_daily_messages()
+        # Return cached result if available and fresh
+        if (cache_key in self._stats_cache and 
+            current_time - self._last_cache_time < self._cache_ttl):
+            return self._stats_cache[cache_key]
+        
+        # Generate fresh stats
+        try:
+            self.update_message_rates()
+            self.update_storage()
             
-            stats = {
-                "total_connected_clients": actual_connected_clients,
-                "total_messages_received": self.format_number(total_messages),
-                "total_subscriptions": actual_subscriptions,
-                "retained_messages": self.retained_messages,
-                "messages_history": list(self.messages_history),
-                "published_history": list(self.published_history),
-                "bytes_stats": hourly_data,
-                "daily_message_stats": daily_messages
-            }
-            
-            # Add timestamps if requested
-            if include_timestamps:
-                current_time = datetime.now().isoformat()
-                stats.update({
-                    "stats_timestamp": current_time,
-                    "message_stats_timestamps": list(self.messages_timestamps)[-10:],  # Last 10
-                    "subscription_stats_timestamps": list(self.subscriptions_timestamps)[-10:],
-                    "client_stats_timestamps": list(self.clients_timestamps)[-10:],
-                    "retained_stats_timestamps": list(self.retained_timestamps)[-10:]
-                })
+            with self._lock:
+                actual_subscriptions = max(0, self.subscriptions - 2)
+                actual_connected_clients = max(0, self.connected_clients - 1)
+                total_messages = self.message_counter.get_total_count()
                 
-                # Add timestamps to daily_message_stats if available
-                if "daily_message_stats" in stats and isinstance(stats["daily_message_stats"], dict):
-                    if "dates" in stats["daily_message_stats"]:
-                        # Generate timestamps for each date (assuming end of day)
-                        timestamps = []
-                        for date_str in stats["daily_message_stats"]["dates"]:
-                            try:
-                                date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-                                timestamp = date_obj.replace(hour=23, minute=59, second=59).isoformat()
-                                timestamps.append(timestamp)
-                            except ValueError:
-                                timestamps.append(current_time)
-                        stats["daily_message_stats"]["timestamps"] = timestamps
-            
-            return stats
+                # Use cached data retrieval with cache key based on time
+                hourly_cache_key = f"hourly_{int(current_time // 60)}"  # Cache for 1 minute
+                daily_cache_key = f"daily_{int(current_time // 300)}"   # Cache for 5 minutes
+                
+                hourly_data = self._get_cached_hourly_data(hourly_cache_key)
+                daily_messages = self._get_cached_daily_data(daily_cache_key)
+                
+                stats = {
+                    "total_connected_clients": actual_connected_clients,
+                    "total_messages_received": self.format_number(total_messages),
+                    "total_subscriptions": actual_subscriptions,
+                    "retained_messages": self.retained_messages,
+                    "messages_history": list(self.messages_history),
+                    "published_history": list(self.published_history),
+                    "bytes_stats": hourly_data,
+                    "daily_message_stats": daily_messages
+                }
+                
+                # Add timestamps if requested (this is the expensive part)
+                if include_timestamps:
+                    current_timestamp = datetime.now().isoformat()
+                    
+                    # Limit timestamp arrays to prevent large payloads
+                    max_timestamps = 50
+                    
+                    stats.update({
+                        "stats_timestamp": current_timestamp,
+                        "message_stats_timestamps": list(self.messages_timestamps)[-max_timestamps:],
+                        "subscription_stats_timestamps": list(self.subscriptions_timestamps)[-max_timestamps:],
+                        "client_stats_timestamps": list(self.clients_timestamps)[-max_timestamps:],
+                        "retained_stats_timestamps": list(self.retained_timestamps)[-max_timestamps:]
+                    })
+                    
+                    # Add timestamps to daily_message_stats if available
+                    if isinstance(stats["daily_message_stats"], dict) and "dates" in stats["daily_message_stats"]:
+                        dates = stats["daily_message_stats"]["dates"]
+                        if len(dates) <= 20:  # Only add timestamps for reasonable number of dates
+                            timestamps = []
+                            for date_str in dates:
+                                try:
+                                    date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+                                    timestamp = date_obj.replace(hour=23, minute=59, second=59).isoformat()
+                                    timestamps.append(timestamp)
+                                except ValueError:
+                                    timestamps.append(current_timestamp)
+                            stats["daily_message_stats"]["timestamps"] = timestamps
+                
+                # Cache the result
+                self._stats_cache[cache_key] = stats
+                self._last_cache_time = current_time
+                
+                # Clean old cache entries
+                if len(self._stats_cache) > 20:
+                    old_keys = [k for k in self._stats_cache.keys() if k != cache_key]
+                    for old_key in old_keys[:10]:  # Remove 10 oldest entries
+                        del self._stats_cache[old_key]
+                
+                return stats
+                
+        except Exception as e:
+            logger.error(f"Error generating stats: {e}")
+            # Return minimal stats on error
+            return {
+                "total_connected_clients": 0,
+                "total_messages_received": "0",
+                "total_subscriptions": 0,
+                "retained_messages": 0,
+                "messages_history": [],
+                "published_history": [],
+                "bytes_stats": {"timestamps": [], "bytes_received": [], "bytes_sent": []},
+                "daily_message_stats": {"dates": [], "counts": [], "timestamps": []},
+                "mqtt_connected": False,
+                "connection_error": "Error retrieving stats"
+            }
+
 
 class MessageCounter:
     def __init__(self, file_path="message_counts.json"):
@@ -398,8 +391,21 @@ async def get_mqtt_stats(
     await log_request(request)
     
     try:
-        stats = mqtt_stats.get_stats(include_timestamps=include_timestamps)
+        # Set a timeout for stats generation
+        start_time = time.time()
+        
+        # Run stats generation in a separate thread to avoid blocking
+        loop = asyncio.get_event_loop()
+        stats = await asyncio.wait_for(
+            loop.run_in_executor(None, mqtt_stats.get_stats, include_timestamps),
+            timeout=10.0  # 10 second timeout
+        )
+        
+        processing_time = time.time() - start_time
+        logger.info(f"Stats generated in {processing_time:.2f}s")
+        
         stats["mqtt_connected"] = mqtt_stats.connected_clients > 0
+        stats["processing_time"] = round(processing_time, 2)
         
         if not stats["mqtt_connected"]:
             stats["connection_error"] = f"MQTT broker connection failed. Check if Mosquitto is running on {MOSQUITTO_IP}:{MOSQUITTO_PORT}"
@@ -408,10 +414,13 @@ async def get_mqtt_stats(
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return response
         
+    except asyncio.TimeoutError:
+        logger.error("Stats generation timed out")
+        raise HTTPException(status_code=504, detail="Request timed out while generating statistics")
     except Exception as e:
         logger.error(f"Unexpected error in get_stats endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
+    
 @app.get("/api/v1/admin/users")
 async def list_users(
     admin_user: dict = Depends(require_admin),

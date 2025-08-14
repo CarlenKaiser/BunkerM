@@ -142,6 +142,9 @@ const visitorStats = computed(() => {
 
 const fetchStats = async () => {
   isLoading.value = true
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 15000) // 15 second timeout
+  
   try {
     const timestamp = Date.now() / 1000
     const nonce = generateNonce()
@@ -160,9 +163,12 @@ const fetchStats = async () => {
       {
         method: 'GET',
         headers,
-        credentials: 'include'
+        credentials: 'include',
+        signal: controller.signal // Add abort signal
       }
     )
+
+    clearTimeout(timeoutId) // Clear timeout if request succeeds
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
@@ -175,6 +181,11 @@ const fetchStats = async () => {
           throw new Error('You do not have permission to view these stats.')
         case 429:
           throw new Error('Too many requests. Please slow down.')
+        case 504:
+          throw new Error('Request timed out. The server is taking too long to respond.')
+        case 502:
+        case 503:
+          throw new Error('Server temporarily unavailable. Please try again in a moment.')
         default:
           throw new Error(errorData.message || `API request failed with status ${response.status}`)
       }
@@ -182,32 +193,42 @@ const fetchStats = async () => {
 
     const data = await response.json()
     
+    // Validate the response data structure
+    if (!data || typeof data !== 'object') {
+      throw new Error('Invalid response format from server')
+    }
+    
     stats.value = {
       ...defaultStats,
       ...data,
-      mqtt_connected: data.mqtt_connected || false,
-      stats_timestamp: data.stats_timestamp || new Date().toISOString(),
-      message_stats_timestamps: data.message_stats_timestamps || [],
-      subscription_stats_timestamps: data.subscription_stats_timestamps || [],
-      client_stats_timestamps: data.client_stats_timestamps || [],
-      retained_stats_timestamps: data.retained_stats_timestamps || [],
-      daily_message_stats: {
-        ...data.daily_message_stats,
-        timestamps: data.daily_message_stats?.timestamps || []
-      }
+      mqtt_connected: data.mqtt_connected || false
     }
 
     if (!data.mqtt_connected && data.connection_error) {
       error.value = data.connection_error
+    } else {
+      error.value = null // Clear error on successful response
     }
 
-  } catch (err) {
-    console.error('Fetch error:', err)
-    error.value = err instanceof Error ? err.message : 'Failed to load dashboard data'
-    stats.value = { ...defaultStats }
-  } finally {
-    isLoading.value = false
+  } catch (err: unknown) {
+  clearTimeout(timeoutId)
+  console.error('Fetch error:', err)
+  
+  if (err instanceof DOMException && err.name === 'AbortError') {
+    error.value = 'Request timed out. Please try again.'
+  } else if (err instanceof Error) {
+    error.value = err.message
+  } else {
+    error.value = 'Failed to load dashboard data'
   }
+  
+  // Don't reset stats completely on timeout, keep showing last known good data
+  if (!(err instanceof DOMException && err.name === 'AbortError')) {
+    stats.value = { ...defaultStats }
+  }
+} finally {
+  isLoading.value = false
+}
 }
 
 onMounted(() => {

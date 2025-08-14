@@ -80,6 +80,9 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Install Python packages
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir \
+    asyncio \
+    time \
+    functools \
     firebase-admin \
     psutil \
     paho-mqtt \
