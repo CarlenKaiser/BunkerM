@@ -69,13 +69,23 @@ export const mqttService = {
         return [];
       }
       
-      console.log('Clients string:', response.data.clients);
-      console.log('Clients string type:', typeof response.data.clients);
+      console.log('Clients array:', response.data.clients);
+      console.log('Clients array type:', Array.isArray(response.data.clients));
       
-      // Original parsing logic
-      const clientsList = response.data.clients.split('\n').filter(Boolean).map(username => ({ username }));
+      // Handle both array and string cases
+      let clientsList;
+      if (Array.isArray(response.data.clients)) {
+        // If it's already an array, just map to the desired format
+        clientsList = response.data.clients.map(username => ({ username }));
+      } else if (typeof response.data.clients === 'string') {
+        // Legacy format - split by newlines
+        clientsList = response.data.clients.split('\n').filter(Boolean).map(username => ({ username }));
+      } else {
+        console.warn('Unexpected clients data format:', response.data.clients);
+        return [];
+      }
+      
       console.log('Parsed clients list:', clientsList);
-      
       return clientsList;
     } catch (error) {
       console.error('Error in getClients:', error);
