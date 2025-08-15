@@ -248,12 +248,6 @@ export const mqttService = {
     return response.data;
   },
 
-  async deleteGroup(name) {
-    const response = await api.delete(`/groups/${name}`);
-    //console.log('Delete group response:', response);
-    return response.data;
-  },
-
   async importPasswordFile(formData) {
     try {
       const response = await api.post('/api/dynsec/import-password-file', formData);
