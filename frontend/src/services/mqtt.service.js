@@ -164,7 +164,7 @@ export const mqttService = {
   async getGroups() {
     const response = await api.get('/groups');
     //console.log('Get groups response:', response);
-    return response.data.groups.split('\n').filter(Boolean).map(name => ({ name }));
+    return response.data;
   },
 
 
@@ -264,78 +264,76 @@ export const mqttService = {
     }
   },
 
-  async getPasswordFileStatus() {
-    try {
-      const response = await axios.get('/api/dynsec/password-file-status');
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching password file status:', error);
-      throw error;
-    }
-  },
-  
+async getPasswordFileStatus() {
+  try {
+    const response = await api.get('/api/dynsec/password-file-status');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching password file status:', error);
+    throw error;
+  }
+},
   // Restarting Mosquitto
-  async restartMosquitto() {
-    try {
-      const response = await axios.post('/api/dynsec/restart-mosquitto', {});
-      return response.data;
-    } catch (error) {
-      console.error('Error restarting Mosquitto broker:', error);
-      throw error;
-    }
-  },
-
+async restartMosquitto() {
+  try {
+    const response = await api.post('/api/dynsec/restart-mosquitto', {});
+    return response.data;
+  } catch (error) {
+    console.error('Error restarting Mosquitto broker:', error);
+    throw error;
+  }
+},
 
 
   // Get Mosquitto configuration
-  async getMosquittoConfig() {
-    try {
-      const response = await axios.get('/api/config/mosquitto-config');
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching Mosquitto configuration:', error);
-      throw error;
-    }
-  },
+async getMosquittoConfig() {
+  try {
+    const response = await api.get('/api/config/mosquitto-config');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching Mosquitto configuration:', error);
+    throw error;
+  }
+},
 
   // Save Mosquitto configuration
-  async saveMosquittoConfig(configData) {
-    try {
-      const response = await axios.post('/api/config/mosquitto-config', configData);
-      return response.data;
-    } catch (error) {
-      console.error('Error saving Mosquitto configuration:', error);
-      throw error;
-    }
-  },
+async saveMosquittoConfig(configData) {
+  try {
+    const response = await api.post('/api/config/mosquitto-config', configData);
+    return response.data;
+  } catch (error) {
+    console.error('Error saving Mosquitto configuration:', error);
+    throw error;
+  }
+},
 
   // Reset Mosquitto configuration to default
-  async resetMosquittoConfig() {
-    try {
-      const response = await axios.post('/api/config/reset-mosquitto-config', {});
-      return response.data;
-    } catch (error) {
-      console.error('Error resetting Mosquitto configuration:', error);
-      throw error;
-    }
-  },
+async resetMosquittoConfig() {
+  try {
+    const response = await api.post('/api/config/reset-mosquitto-config', {});
+    return response.data;
+  } catch (error) {
+    console.error('Error resetting Mosquitto configuration:', error);
+    throw error;
+  }
+},
 
   // Remove a listener from Mosquitto configuration
-  async removeMosquittoListener(port) {
-    try {
-      const response = await axios.post('/api/config/remove-mosquitto-listener', 
-        { port: port });
-      return response.data;
-    } catch (error) {
-      console.error('Error removing Mosquitto listener:', error);
-      throw error;
-    }
-  },
+async removeMosquittoListener(port) {
+  try {
+    const response = await api.post('/api/config/remove-mosquitto-listener', 
+      { port: port });
+    return response.data;
+  } catch (error) {
+    console.error('Error removing Mosquitto listener:', error);
+    throw error;
+  }
+},
 
 // Get the dynamic security JSON configuration
 async getDynSecJson() {
   try {
-    const response = await axios.get('/api/config/dynsec-json');
+    const response = await api.get('/api/config/dynsec-json');
     return response.data;
   } catch (error) {
     console.error('Error getting dynamic security JSON:', error);
@@ -363,7 +361,7 @@ async importDynSecJson(formData) {
 // Reset dynamic security JSON to default
 async resetDynSecJson() {
   try {
-    const response = await axios.post('/api/config/reset-dynsec-json', {});
+    const response = await api.post('/api/config/reset-dynsec-json', {});
     return response.data;
   } catch (error) {
     console.error('Error resetting dynamic security JSON:', error);
@@ -373,13 +371,11 @@ async resetDynSecJson() {
     };
   }
 },
-
-// Export dynamic security JSON file
 async exportDynSecJson() {
   try {
     console.log("Starting export process...");
     // Make the request with responseType blob to handle binary data
-    const response = await axios.get('/api/config/export-dynsec-json', {
+    const response = await api.get('/api/config/export-dynsec-json', {
       responseType: 'blob' // Important for file downloads
     });
     
