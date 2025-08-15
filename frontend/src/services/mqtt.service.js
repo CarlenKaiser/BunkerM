@@ -153,7 +153,7 @@ export const mqttService = {
 
   // Create Group
   async createGroup(name) {
-    const response = await api.post('/groups', {
+    const response = await api.post('api/groups', {
       name: name
     });
     //console.log('Create group response:', response);
@@ -162,7 +162,7 @@ export const mqttService = {
 
   // List Groups
   async getGroups() {
-    const response = await api.get('/groups');
+    const response = await api.get('api/groups');
     //console.log('Get groups response:', response);
     return response.data;
   },
@@ -171,14 +171,14 @@ export const mqttService = {
 
   // Get Group Details
   async getGroup(name) {
-    const response = await api.get(`/groups/${name}`);
+    const response = await api.get(`api/groups/${name}`);
     //console.log('Get group details response:', response);
     return response.data;
   },
 
   // Delete Group
   async deleteGroup(name) {
-    const response = await api.delete(`/groups/${name}`);
+    const response = await api.delete(`api/groups/${name}`);
     //console.log('Delete group response:', response);
     return response.data;
   },
@@ -201,7 +201,7 @@ export const mqttService = {
   },
 
   async addRoleToGroup(groupName, roleName) {
-    const response = await api.post(`/groups/${groupName}/roles`, {
+    const response = await api.post(`api/groups/${groupName}/roles`, {
       role_name: roleName
     });
     //console.log('Add role to group response:', response);
@@ -209,7 +209,7 @@ export const mqttService = {
   },
 
   async removeRoleFromGroup(groupName, roleName) {
-    const response = await api.delete(`/groups/${groupName}/roles/${roleName}`);
+    const response = await api.delete(`api/groups/${groupName}/roles/${roleName}`);
     //console.log('Remove role from group response:', response);
     return response.data;
   },
