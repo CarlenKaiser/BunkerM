@@ -37,11 +37,6 @@ import uvicorn
 load_dotenv()
 security = HTTPBearer()
 
-class RequestParams(BaseModel):
-    nonce: Optional[str] = None
-    timestamp: Optional[int] = None
-
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -184,9 +179,6 @@ class RoleCreate(BaseModel):
     name: str
     textname: Optional[str] = None
     acls: Optional[List[Dict[str, Any]]] = None
-    nonce: Optional[str] = None
-    timestamp: Optional[int] = None
-
 
 class GroupCreate(BaseModel):
     name: str
@@ -324,7 +316,7 @@ async def list_clients(
 ):
     """List all clients"""
     await log_request(request)
-    logger.info(f"Listing clients. Nonce: {nonce}, Timestamp: {timestamp}")
+    logger.info(f"Listing clients.")
 
     try:
         command = ["listClients"]
@@ -558,7 +550,7 @@ async def list_roles(
 ):
     """List all clients"""
     await log_request(request)
-    logger.info(f"Listing clients. Nonce: {nonce}, Timestamp: {timestamp}")
+    logger.info(f"Listing clients.")
 
     try:
         command = ["listRoles"]
