@@ -93,9 +93,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+allowed_hosts = ["*"]  
 # Trusted Host middleware
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
 # Import mosquitto password file
 app.include_router(password_import_router, prefix="/api/v1")

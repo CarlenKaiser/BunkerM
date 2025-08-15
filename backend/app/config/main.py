@@ -69,6 +69,46 @@ app.add_middleware(
 
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
+async def verify_firebase_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> dict:
+    try:
+        token = credentials.credentials
+        decoded_token = auth.verify_id_token(token)
+        user_role = decoded_token.get('role', 'user')
+        
+        logger.info(f"Authenticated user: {decoded_token.get('email', 'unknown')}")
+        
+        return {
+            'uid': decoded_token['uid'],
+            'email': decoded_token.get('email'),
+            'name': decoded_token.get('name'),
+            'role': user_role,
+            'verified': decoded_token.get('email_verified', False),
+            'is_admin': user_role == 'admin',
+            'is_moderator': user_role in ['admin', 'moderator']
+        }
+    except auth.InvalidIdTokenError:
+        logger.error("Invalid Firebase ID token provided")
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    except auth.ExpiredIdTokenError:
+        logger.error("Expired Firebase ID token provided")
+        raise HTTPException(status_code=401, detail="Authentication token has expired")
+    except Exception as e:
+        logger.error(f"Authentication error: {str(e)}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
+
+# Authorization dependencies
+async def require_admin(user: dict = Depends(verify_firebase_token)) -> dict:
+    if not user.get('is_admin', False):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+async def require_moderator(user: dict = Depends(verify_firebase_token)) -> dict:
+    if not user.get('is_moderator', False):
+        raise HTTPException(status_code=403, detail="Moderator or admin access required")
+    return user
+
 # Include routers with Firebase auth
 app.include_router(
     mosquitto_config_router,
@@ -81,65 +121,6 @@ app.include_router(
     prefix="/api/v1",
     dependencies=[Depends(verify_firebase_token)]
 )
-
-async def verify_firebase_token(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-) -> dict:
-    """Verify Firebase ID token and return user info"""
-    try:
-        token = credentials.credentials
-        decoded_token = auth.verify_id_token(token)
-        
-        # Get custom claims (roles/permissions)
-        custom_claims = decoded_token.get('custom_claims', {})
-        user_role = custom_claims.get('role', 'user')
-        
-        logger.info(f"Authenticated user: {decoded_token.get('email', 'unknown')}")
-        
-        return {
-            'uid': decoded_token['uid'],
-            'email': decoded_token.get('email'),
-            'role': user_role,
-            'is_admin': user_role == 'admin',
-            'is_moderator': user_role in ['admin', 'moderator']
-        }
-        
-    except auth.InvalidIdTokenError:
-        logger.warning("Invalid Firebase ID token provided")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication token"
-        )
-    except auth.ExpiredIdTokenError:
-        logger.warning("Expired Firebase ID token provided")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication token has expired"
-        )
-    except Exception as e:
-        logger.error(f"Authentication error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication failed"
-        )
-
-async def require_admin(user: dict = Depends(verify_firebase_token)) -> dict:
-    """Require admin role"""
-    if not user.get('is_admin', False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
-    return user
-
-async def require_moderator(user: dict = Depends(verify_firebase_token)) -> dict:
-    """Require moderator or admin role"""
-    if not user.get('is_moderator', False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Moderator or admin access required"
-        )
-    return user
 
 async def log_request(request: Request):
     """Log API request details"""
