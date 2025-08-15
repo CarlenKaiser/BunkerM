@@ -190,39 +190,10 @@ export const mqttService = {
   },
 
   async getGroups() {
-    try {
-      const response = await api.get('/groups');
-      console.log("Groups response:", response.data);
-      
-      // Handle both formats:
-      // 1. Direct array response (new format)
-      // 2. { groups: string } (old format)
-      let groupsList;
-      if (Array.isArray(response.data)) {
-        groupsList = response.data.map(name => ({ name }));
-      } else if (response.data.groups) {
-        groupsList = typeof response.data.groups === 'string' 
-          ? response.data.groups.split('\n').filter(Boolean).map(name => ({ name }))
-          : response.data.groups.map(name => ({ name }));
-      } else {
-        console.error('Unexpected groups format:', response.data);
-        return [];
-      }
-      
-      return groupsList;
-    } catch (error) {
-      console.error('Error fetching groups:', {
-        error: error.message,
-        response: error.response?.data
-      });
-      
-      // Check if we got HTML back (indicating auth or server error)
-      if (error.response?.headers?.['content-type']?.includes('text/html')) {
-        throw new Error('Authentication failed or server error');
-      }
-      
-      return [];
-    }
+    const response = await api.get('/groups');
+    return Array.isArray(response.data)
+      ? response.data
+      : response.data?.groups?.split('\n').filter(Boolean).map(name => ({ name })) || [];
   },
 
   async getGroup(name) {
