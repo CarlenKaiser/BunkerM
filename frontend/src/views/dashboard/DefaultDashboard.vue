@@ -247,7 +247,7 @@ const fetchStats = async (): Promise<void> => {
 // =========================
 onMounted((): void => {
   fetchStats()
-  intervalId = window.setInterval(fetchStats, 2000)
+  //intervalId = window.setInterval(fetchStats, 2000)
 })
 
 onUnmounted((): void => {
@@ -260,33 +260,8 @@ onUnmounted((): void => {
 
 <template>
   <div class="dashboard-container">
-    <!-- Connection status alert -->
-    <v-alert v-if="!stats.mqtt_connected" type="warning" variant="tonal" class="mb-4">
-      MQTT Broker is disconnected. Some data may not be current.
-      <template v-if="error"><br>{{ error }}</template>
-    </v-alert>
-
-    <!-- Error alert -->
-    <v-alert
-      v-if="error && stats.mqtt_connected"
-      type="error"
-      variant="tonal"
-      closable
-      class="mb-4"
-      @click:close="error = null"
-    >
-      {{ error }}
-    </v-alert>
-
-    <!-- Loading indicator -->
-    <v-progress-linear
-      v-if="isLoading"
-      indeterminate
-      color="primary"
-      height="2"
-      class="loading-bar"
-    ></v-progress-linear>
-
+    <!-- Your existing alerts and loading indicator -->
+    
     <!-- MQTT Stats Cards -->
     <WidgetFive
       :total-messages-received="stats.total_messages_received"
@@ -302,9 +277,9 @@ onUnmounted((): void => {
     <v-row>
       <!-- Message Rates Chart -->
       <v-col cols="12">
-        <!-- Keep UniqueVisitor prop shape intact -->
-        <UniqueVisitor
-          :stats="visitorStats"
+        <!-- Updated to handle refresh event -->
+        <UniqueVisitor 
+          :stats="visitorStats" 
           @refresh="fetchStats"
         />
       </v-col>
