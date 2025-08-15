@@ -11,7 +11,7 @@ import { api } from './api';
 export const groupService = {
   async getGroups() {
     try {
-      const response = await api.get('/api/v1/groups');
+      const response = await api.get('/groups');
       
       // Handle both array and string response formats
       let groupsList;
@@ -33,7 +33,7 @@ export const groupService = {
 
   async createGroup(name) {
     try {
-      const response = await api.post('/api/v1/groups', { name });
+      const response = await api.post('/groups', { name });
       return response.data;
     } catch (error) {
       console.error('Error creating group:', error);
@@ -43,7 +43,7 @@ export const groupService = {
 
   async deleteGroup(name) {
     try {
-      const response = await api.delete(`/api/v1/groups/${name}`);
+      const response = await api.delete(`/groups/${name}`);
       return response.data;
     } catch (error) {
       console.error('Error deleting group:', error);
@@ -54,7 +54,7 @@ export const groupService = {
   async addRoleToGroup(groupName, roleName) {
     try {
       const response = await api.post(
-        `/api/v1/groups/${groupName}/roles`,
+        `/groups/${groupName}/roles`,
         { role_name: roleName }
       );
       return response.data;
@@ -72,7 +72,7 @@ export const groupService = {
       }
       
       const response = await api.post(
-        `/api/v1/groups/${groupName}/clients`,
+        `/groups/${groupName}/clients`,
         data
       );
       return response.data;
@@ -85,7 +85,7 @@ export const groupService = {
   async removeClientFromGroup(groupName, username) {
     try {
       const response = await api.delete(
-        `/api/v1/groups/${groupName}/clients/${username}`
+        `/groups/${groupName}/clients/${username}`
       );
       return response.data;
     } catch (error) {
@@ -97,7 +97,7 @@ export const groupService = {
   async removeRoleFromGroup(groupName, roleName) {
     try {
       const response = await api.delete(
-        `/api/v1/groups/${groupName}/roles/${roleName}`
+        `/groups/${groupName}/roles/${roleName}`
       );
       return response.data;
     } catch (error) {
