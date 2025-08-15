@@ -7,169 +7,154 @@
 # */
 // services/groupService.js
 import { api } from './api';
-import { generateNonce } from '../utils/security';
-
-// Helper function to get current timestamp in seconds
-const getCurrentTimestamp = () => Math.floor(Date.now() / 1000);
+import { getAuth, getIdToken } from 'firebase/auth';
 
 export const groupService = {
   async getGroups() {
-    try {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
-      
-      const response = await api.get('/groups', {
-        params: {
-          nonce,
-          timestamp
-        }
-      });
-      
-      // Handle both array and string response formats
-      let groupsList;
-      if (Array.isArray(response.data)) {
-        groupsList = response.data;
-      } else if (typeof response.data === 'string') {
-        groupsList = response.data.split('\n').filter(Boolean);
-      } else {
-        console.warn('Unexpected groups data format:', response.data);
-        return [];
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) throw new Error('User not authenticated');
+    
+    const idToken = await getIdToken(user);
+    
+    const response = await api.get('/groups', {
+      headers: {
+        'Authorization': `Bearer ${idToken}`
       }
-      
-      return groupsList.map(name => ({ name }));
-    } catch (error) {
-      console.error('Error fetching groups:', error);
-      return [];
-    }
+    });
+    return response.data.groups.split('\n').filter(Boolean).map(name => ({ name }));
+  },
+
+  async getGroup(name) {
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) throw new Error('User not authenticated');
+    
+    const idToken = await getIdToken(user);
+    
+    const response = await api.get(`/groups/${name}`, {
+      headers: {
+        'Authorization': `Bearer ${idToken}`
+      }
+    });
+    return response.data;
   },
 
   async createGroup(name) {
-    try {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
-      
-      const response = await api.post('/groups', 
-        { name },
-        {
-          params: {
-            nonce,
-            timestamp
-          }
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) throw new Error('User not authenticated');
+    
+    const idToken = await getIdToken(user);
+    
+    const response = await api.post('/groups', 
+      { name },
+      {
+        headers: {
+          'Authorization': `Bearer ${idToken}`
         }
-      );
-      return response.data;
-    } catch (error) {
-      console.error('Error creating group:', error);
-      throw error;
-    }
+      }
+    );
+    return response.data;
   },
 
   async deleteGroup(name) {
-    try {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
-      
-      const response = await api.delete(`/groups/${name}`, {
-        params: {
-          nonce,
-          timestamp
-        }
-      });
-      return response.data;
-    } catch (error) {
-      console.error('Error deleting group:', error);
-      throw error;
-    }
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) throw new Error('User not authenticated');
+    
+    const idToken = await getIdToken(user);
+    
+    const response = await api.delete(`/groups/${name}`, {
+      headers: {
+        'Authorization': `Bearer ${idToken}`
+      }
+    });
+    return response.data;
   },
 
   async addRoleToGroup(groupName, roleName) {
-    try {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
-      
-      const response = await api.post(
-        `/groups/${groupName}/roles`,
-        { role_name: roleName },
-        {
-          params: {
-            nonce,
-            timestamp
-          }
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) throw new Error('User not authenticated');
+    
+    const idToken = await getIdToken(user);
+    
+    const response = await api.post(
+      `/groups/${groupName}/roles`,
+      { role_name: roleName },
+      {
+        headers: {
+          'Authorization': `Bearer ${idToken}`
         }
-      );
-      return response.data;
-    } catch (error) {
-      console.error('Error adding role to group:', error);
-      throw error;
-    }
+      }
+    );
+    return response.data;
   },
 
   async addClientToGroup(groupName, username, priority = null) {
-    try {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
-      
-      const data = { username };
-      if (priority !== null) {
-        data.priority = priority;
-      }
-      
-      const response = await api.post(
-        `/groups/${groupName}/clients`,
-        data,
-        {
-          params: {
-            nonce,
-            timestamp
-          }
-        }
-      );
-      return response.data;
-    } catch (error) {
-      console.error('Error adding client to group:', error);
-      throw error;
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) throw new Error('User not authenticated');
+    
+    // Validate inputs
+    if (!groupName || !username) {
+      throw new Error('Group name and username are required');
     }
+  
+    const data = { username };
+    if (priority !== null && !isNaN(priority)) {
+      data.priority = priority;
+    }
+  
+    const idToken = await getIdToken(user);
+  
+    const response = await api.post(
+      `/groups/${groupName}/clients`,
+      data,
+      {
+        headers: {
+          'Authorization': `Bearer ${idToken}`
+        }
+      }
+    );
+  
+    return response.data;
   },
   
   async removeClientFromGroup(groupName, username) {
-    try {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
-      
-      const response = await api.delete(
-        `/groups/${groupName}/clients/${username}`,
-        {
-          params: {
-            nonce,
-            timestamp
-          }
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) throw new Error('User not authenticated');
+    
+    const idToken = await getIdToken(user);
+    
+    const response = await api.delete(
+      `/groups/${groupName}/clients/${username}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${idToken}`
         }
-      );
-      return response.data;
-    } catch (error) {
-      console.error('Error removing client from group:', error);
-      throw error;
-    }
+      }
+    );
+    return response.data;
   },
 
   async removeRoleFromGroup(groupName, roleName) {
-    try {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
-      
-      const response = await api.delete(
-        `/groups/${groupName}/roles/${roleName}`,
-        {
-          params: {
-            nonce,
-            timestamp
-          }
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) throw new Error('User not authenticated');
+    
+    const idToken = await getIdToken(user);
+    
+    const response = await api.delete(
+      `/groups/${groupName}/roles/${roleName}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${idToken}`
         }
-      );
-      return response.data;
-    } catch (error) {
-      console.error('Error removing role from group:', error);
-      throw error;
-    }
+      }
+    );
+    return response.data;
   }
 };
