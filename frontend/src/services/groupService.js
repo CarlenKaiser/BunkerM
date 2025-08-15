@@ -7,67 +7,48 @@
 # */
 // services/groupService.js
 import { api } from './api';
-import { getAuth, getIdToken } from 'firebase/auth';
+import { generateNonce } from '../utils/security';
+
+// Helper function to get current timestamp in seconds
+const getCurrentTimestamp = () => Math.floor(Date.now() / 1000);
 
 export const groupService = {
   async getGroups() {
-    const auth = getAuth();
-    const user = auth.currentUser;
-    if (!user) throw new Error('User not authenticated');
-    
-    const idToken = await getIdToken(user);
+    const timestamp = getCurrentTimestamp();
+    const nonce = generateNonce();
     
     const response = await api.get('/groups', {
-      headers: {
-        'Authorization': `Bearer ${idToken}`
+      params: {
+        nonce,
+        timestamp
       }
     });
-    
-    // Handle different response formats
-    if (!response.data) {
-      return [];
-    }
-    
-    if (Array.isArray(response.data)) {
-      return response.data;
-    }
-    
-    if (response.data.groups) {
-      return typeof response.data.groups === 'string' 
-        ? response.data.groups.split('\n').filter(Boolean).map(name => ({ name }))
-        : [];
-    }
-    
-    return [];
+    return response.data.groups.split('\n').filter(Boolean).map(name => ({ name }));
   },
 
   async getGroup(name) {
-    const auth = getAuth();
-    const user = auth.currentUser;
-    if (!user) throw new Error('User not authenticated');
-    
-    const idToken = await getIdToken(user);
+    const timestamp = getCurrentTimestamp();
+    const nonce = generateNonce();
     
     const response = await api.get(`/groups/${name}`, {
-      headers: {
-        'Authorization': `Bearer ${idToken}`
+      params: {
+        nonce,
+        timestamp
       }
     });
     return response.data;
   },
 
   async createGroup(name) {
-    const auth = getAuth();
-    const user = auth.currentUser;
-    if (!user) throw new Error('User not authenticated');
-    
-    const idToken = await getIdToken(user);
+    const timestamp = getCurrentTimestamp();
+    const nonce = generateNonce();
     
     const response = await api.post('/groups', 
       { name },
       {
-        headers: {
-          'Authorization': `Bearer ${idToken}`
+        params: {
+          nonce,
+          timestamp
         }
       }
     );
@@ -75,33 +56,29 @@ export const groupService = {
   },
 
   async deleteGroup(name) {
-    const auth = getAuth();
-    const user = auth.currentUser;
-    if (!user) throw new Error('User not authenticated');
-    
-    const idToken = await getIdToken(user);
+    const timestamp = getCurrentTimestamp();
+    const nonce = generateNonce();
     
     const response = await api.delete(`/groups/${name}`, {
-      headers: {
-        'Authorization': `Bearer ${idToken}`
+      params: {
+        nonce,
+        timestamp
       }
     });
     return response.data;
   },
 
   async addRoleToGroup(groupName, roleName) {
-    const auth = getAuth();
-    const user = auth.currentUser;
-    if (!user) throw new Error('User not authenticated');
-    
-    const idToken = await getIdToken(user);
+    const timestamp = getCurrentTimestamp();
+    const nonce = generateNonce();
     
     const response = await api.post(
       `/groups/${groupName}/roles`,
       { role_name: roleName },
       {
-        headers: {
-          'Authorization': `Bearer ${idToken}`
+        params: {
+          nonce,
+          timestamp
         }
       }
     );
@@ -109,9 +86,8 @@ export const groupService = {
   },
 
   async addClientToGroup(groupName, username, priority = null) {
-    const auth = getAuth();
-    const user = auth.currentUser;
-    if (!user) throw new Error('User not authenticated');
+    const timestamp = getCurrentTimestamp();
+    const nonce = generateNonce();
     
     // Validate inputs
     if (!groupName || !username) {
@@ -123,14 +99,20 @@ export const groupService = {
       data.priority = priority;
     }
   
-    const idToken = await getIdToken(user);
+    // Debug log
+    console.log('Adding client to group:', {
+      endpoint: `/groups/${groupName}/clients`,
+      data,
+      params: { nonce, timestamp }
+    });
   
     const response = await api.post(
       `/groups/${groupName}/clients`,
       data,
       {
-        headers: {
-          'Authorization': `Bearer ${idToken}`
+        params: {
+          nonce,
+          timestamp
         }
       }
     );
@@ -139,17 +121,15 @@ export const groupService = {
   },
   
   async removeClientFromGroup(groupName, username) {
-    const auth = getAuth();
-    const user = auth.currentUser;
-    if (!user) throw new Error('User not authenticated');
-    
-    const idToken = await getIdToken(user);
+    const timestamp = getCurrentTimestamp();
+    const nonce = generateNonce();
     
     const response = await api.delete(
       `/groups/${groupName}/clients/${username}`,
       {
-        headers: {
-          'Authorization': `Bearer ${idToken}`
+        params: {
+          nonce,
+          timestamp
         }
       }
     );
@@ -157,17 +137,15 @@ export const groupService = {
   },
 
   async removeRoleFromGroup(groupName, roleName) {
-    const auth = getAuth();
-    const user = auth.currentUser;
-    if (!user) throw new Error('User not authenticated');
-    
-    const idToken = await getIdToken(user);
+    const timestamp = getCurrentTimestamp();
+    const nonce = generateNonce();
     
     const response = await api.delete(
       `/groups/${groupName}/roles/${roleName}`,
       {
-        headers: {
-          'Authorization': `Bearer ${idToken}`
+        params: {
+          nonce,
+          timestamp
         }
       }
     );
