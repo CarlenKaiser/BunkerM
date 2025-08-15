@@ -5,7 +5,7 @@
 # http://www.apache.org/licenses/LICENSE-2.0
 # Distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
 
-from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi import FastAPI, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -15,6 +15,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from paho.mqtt import client as mqtt_client
 import threading
+import asyncio
 from typing import Dict, List, Optional
 from collections import deque
 from datetime import datetime, timedelta
@@ -79,6 +80,83 @@ MONITORED_TOPICS = {
     "$SYS/broker/load/bytes/sent/15min": "bytes_sent_15min"
 }
 
+class BackgroundDataCollector:
+    """Handles continuous background data collection"""
+    
+    def __init__(self, mqtt_stats_instance):
+        self.mqtt_stats = mqtt_stats_instance
+        self.is_running = False
+        self.task = None
+        self.storage_interval = 180  # 3 minutes for hourly data
+        self.message_rate_interval = 60  # 1 minute for message rates
+        
+    async def start(self):
+        """Start the background data collection"""
+        if not self.is_running:
+            self.is_running = True
+            self.task = asyncio.create_task(self._collection_loop())
+            logger.info("Background data collector started")
+    
+    async def stop(self):
+        """Stop the background data collection"""
+        self.is_running = False
+        if self.task:
+            self.task.cancel()
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                pass
+            logger.info("Background data collector stopped")
+    
+    async def _collection_loop(self):
+        """Main collection loop that runs continuously"""
+        last_storage_update = datetime.now()
+        last_message_rate_update = datetime.now()
+        
+        while self.is_running:
+            try:
+                now = datetime.now()
+                
+                # Update message rates every minute
+                if (now - last_message_rate_update).total_seconds() >= self.message_rate_interval:
+                    self._update_message_rates()
+                    last_message_rate_update = now
+                
+                # Update storage every 3 minutes
+                if (now - last_storage_update).total_seconds() >= self.storage_interval:
+                    self._update_storage()
+                    last_storage_update = now
+                
+                # Sleep for 30 seconds before next check
+                await asyncio.sleep(30)
+                
+            except asyncio.CancelledError:
+                logger.info("Background collection loop cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in background collection loop: {e}")
+                await asyncio.sleep(30)  # Wait before retrying
+    
+    def _update_message_rates(self):
+        """Update message rates (same logic as original)"""
+        with self.mqtt_stats._lock:
+            published_rate = max(0, self.mqtt_stats.messages_sent - self.mqtt_stats.last_messages_sent)
+            self.mqtt_stats.published_history.append(published_rate)
+            self.mqtt_stats.last_messages_sent = self.mqtt_stats.messages_sent
+            self.mqtt_stats.last_update = datetime.now()
+            logger.debug(f"Updated message rates: {published_rate} messages/min")
+    
+    def _update_storage(self):
+        """Update historical storage (same logic as original)"""
+        try:
+            self.mqtt_stats.data_storage.add_hourly_data(
+                float(self.mqtt_stats.bytes_received_15min),
+                float(self.mqtt_stats.bytes_sent_15min)
+            )
+            logger.info(f"Stored hourly data: RX={self.mqtt_stats.bytes_received_15min}, TX={self.mqtt_stats.bytes_sent_15min}")
+        except Exception as e:
+            logger.error(f"Error updating storage: {e}")
+
 class MQTTStats:
     def __init__(self):
         self._lock = threading.Lock()
@@ -111,31 +189,8 @@ class MQTTStats:
         with self._lock:
             self.message_counter.increment_count()
 
-    def update_storage(self):
-        now = datetime.now()
-        if (now - self.last_storage_update).total_seconds() >= 180:
-            try:
-                self.data_storage.add_hourly_data(
-                    float(self.bytes_received_15min),
-                    float(self.bytes_sent_15min)
-                )
-                self.last_storage_update = now
-            except Exception as e:
-                logger.error(f"Error updating storage: {e}")
-
-    def update_message_rates(self):
-        now = datetime.now()
-        if (now - self.last_update).total_seconds() >= 60:
-            with self._lock:
-                published_rate = max(0, self.messages_sent - self.last_messages_sent)
-                self.published_history.append(published_rate)
-                self.last_messages_sent = self.messages_sent
-                self.last_update = now
-
     def get_stats(self) -> Dict:
-        self.update_message_rates()
-        self.update_storage()
-        
+        """Get current stats without forcing updates (background handles updates)"""
         with self._lock:
             actual_subscriptions = max(0, self.subscriptions - 2)
             actual_connected_clients = max(0, self.connected_clients - 1)
@@ -151,7 +206,8 @@ class MQTTStats:
                 "messages_history": list(self.messages_history),
                 "published_history": list(self.published_history),
                 "bytes_stats": hourly_data,
-                "daily_message_stats": daily_messages
+                "daily_message_stats": daily_messages,
+                "last_update": self.last_update.isoformat()
             }
 
 class MessageCounter:
@@ -192,16 +248,30 @@ class MessageCounter:
     def get_total_count(self) -> int:
         return sum(self.daily_counts.values())
 
-# Initialize MQTT Stats
+# Initialize MQTT Stats and Background Collector
 mqtt_stats = MQTTStats()
+background_collector = BackgroundDataCollector(mqtt_stats)
 limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Application lifespan manager"""
+    # Startup
     client = connect_mqtt()
     client.loop_start()
+    
+    # Start background data collection
+    await background_collector.start()
+    
+    logger.info("Application started with background data collection")
+    
     yield
+    
+    # Shutdown
+    await background_collector.stop()
     client.loop_stop()
+    
+    logger.info("Application shutdown complete")
 
 app = FastAPI(
     title="MQTT Monitor API",
@@ -374,7 +444,12 @@ async def list_users(
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "background_collector_running": background_collector.is_running,
+        "mqtt_connected": mqtt_stats.connected_clients > 0,
+        "last_data_update": mqtt_stats.last_update.isoformat()
+    }
 
 if __name__ == "__main__":
     try:
