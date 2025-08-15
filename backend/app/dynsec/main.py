@@ -404,19 +404,11 @@ async def list_groups(request: Request, user: dict = Depends(require_management)
     success, result = execute_mosquitto_command(["listGroups"])
     if not success:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
-    # Return as direct array
-    return result.split('\n')
-
-@app.get("/api/v1/groups")
-async def list_groups(
-    request: Request,
-    user: dict = Depends(require_management)
-):
-    """List all groups"""
-    success, result = execute_mosquitto_command(["listGroups"])
-    if not success:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=result)
-    return {"groups": result.split('\n')}
+    groups_list = result.split('\n') if isinstance(result, str) else result
+    return {
+        "groups": groups_list,
+        "raw": result  # Keep original for debugging
+    }
 
 @app.get("/api/v1/groups/{group_name}")
 async def get_group(
