@@ -6,7 +6,7 @@
 # Distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
 # */
 import axios from 'axios';
-import { getRuntimeConfig } from '@/config/runtime';
+import { getRuntimeConfig } from '@/api/config/runtime';
 import { getAuth, getIdToken } from 'firebase/auth';
 
 const config = getRuntimeConfig();
@@ -153,7 +153,7 @@ export const mqttService = {
 
   // Create Group
   async createGroup(name) {
-    const response = await api.post('api/groups', {
+    const response = await api.post('/groups', {
       name: name
     });
     //console.log('Create group response:', response);
@@ -162,7 +162,7 @@ export const mqttService = {
 
   // List Groups
   async getGroups() {
-    const response = await api.get('api/groups');
+    const response = await api.get('/groups');
     //console.log('Get groups response:', response);
     return response.data;
   },
@@ -171,14 +171,14 @@ export const mqttService = {
 
   // Get Group Details
   async getGroup(name) {
-    const response = await api.get(`api/groups/${name}`);
+    const response = await api.get(`/groups/${name}`);
     //console.log('Get group details response:', response);
     return response.data;
   },
 
   // Delete Group
   async deleteGroup(name) {
-    const response = await api.delete(`api/groups/${name}`);
+    const response = await api.delete(`/groups/${name}`);
     //console.log('Delete group response:', response);
     return response.data;
   },
@@ -201,7 +201,7 @@ export const mqttService = {
   },
 
   async addRoleToGroup(groupName, roleName) {
-    const response = await api.post(`api/groups/${groupName}/roles`, {
+    const response = await api.post(`/groups/${groupName}/roles`, {
       role_name: roleName
     });
     //console.log('Add role to group response:', response);
@@ -209,7 +209,7 @@ export const mqttService = {
   },
 
   async removeRoleFromGroup(groupName, roleName) {
-    const response = await api.delete(`api/groups/${groupName}/roles/${roleName}`);
+    const response = await api.delete(`/groups/${groupName}/roles/${roleName}`);
     //console.log('Remove role from group response:', response);
     return response.data;
   },
@@ -250,7 +250,7 @@ export const mqttService = {
 
   async importPasswordFile(formData) {
     try {
-      const response = await api.post('/dynsec/import-password-file', formData);
+      const response = await api.post('/api/dynsec/import-password-file', formData);
       return response.data;
     } catch (error) {
       console.error('Error importing password file:', error);
@@ -260,7 +260,7 @@ export const mqttService = {
 
 async getPasswordFileStatus() {
   try {
-    const response = await api.get('/dynsec/password-file-status');
+    const response = await api.get('/api/dynsec/password-file-status');
     return response.data;
   } catch (error) {
     console.error('Error fetching password file status:', error);
@@ -270,7 +270,7 @@ async getPasswordFileStatus() {
   // Restarting Mosquitto
 async restartMosquitto() {
   try {
-    const response = await api.post('/dynsec/restart-mosquitto', {});
+    const response = await api.post('/api/dynsec/restart-mosquitto', {});
     return response.data;
   } catch (error) {
     console.error('Error restarting Mosquitto broker:', error);
@@ -282,7 +282,7 @@ async restartMosquitto() {
   // Get Mosquitto configuration
 async getMosquittoConfig() {
   try {
-    const response = await api.get('/config/mosquitto-config');
+    const response = await api.get('/api/config/mosquitto-config');
     return response.data;
   } catch (error) {
     console.error('Error fetching Mosquitto configuration:', error);
@@ -293,7 +293,7 @@ async getMosquittoConfig() {
   // Save Mosquitto configuration
 async saveMosquittoConfig(configData) {
   try {
-    const response = await api.post('/config/mosquitto-config', configData);
+    const response = await api.post('/api/api/config/mosquitto-config', configData);
     return response.data;
   } catch (error) {
     console.error('Error saving Mosquitto configuration:', error);
@@ -304,7 +304,7 @@ async saveMosquittoConfig(configData) {
   // Reset Mosquitto configuration to default
 async resetMosquittoConfig() {
   try {
-    const response = await api.post('/config/reset-mosquitto-config', {});
+    const response = await api.post('/api/config/reset-mosquitto-config', {});
     return response.data;
   } catch (error) {
     console.error('Error resetting Mosquitto configuration:', error);
@@ -315,7 +315,7 @@ async resetMosquittoConfig() {
   // Remove a listener from Mosquitto configuration
 async removeMosquittoListener(port) {
   try {
-    const response = await api.post('/config/remove-mosquitto-listener', 
+    const response = await api.post('/api/config/remove-mosquitto-listener', 
       { port: port });
     return response.data;
   } catch (error) {
@@ -327,7 +327,7 @@ async removeMosquittoListener(port) {
 // Get the dynamic security JSON configuration
 async getDynSecJson() {
   try {
-    const response = await api.get('/config/dynsec-json');
+    const response = await api.get('/api/config/dynsec-json');
     return response.data;
   } catch (error) {
     console.error('Error getting dynamic security JSON:', error);
@@ -341,7 +341,7 @@ async getDynSecJson() {
 // Import a dynamic security JSON file
 async importDynSecJson(formData) {
   try {
-    const response = await api.post('/config/import-dynsec-json', formData);
+    const response = await api.post('/api/config/import-dynsec-json', formData);
     return response.data;
   } catch (error) {
     console.error('Error importing dynamic security JSON:', error);
@@ -355,7 +355,7 @@ async importDynSecJson(formData) {
 // Reset dynamic security JSON to default
 async resetDynSecJson() {
   try {
-    const response = await api.post('/config/reset-dynsec-json', {});
+    const response = await api.post('/api/config/reset-dynsec-json', {});
     return response.data;
   } catch (error) {
     console.error('Error resetting dynamic security JSON:', error);
@@ -369,7 +369,7 @@ async exportDynSecJson() {
   try {
     console.log("Starting export process...");
     // Make the request with responseType blob to handle binary data
-    const response = await api.get('/config/export-dynsec-json', {
+    const response = await api.get('/api/config/export-dynsec-json', {
       responseType: 'blob' // Important for file downloads
     });
     
