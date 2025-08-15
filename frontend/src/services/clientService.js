@@ -8,10 +8,6 @@
 
 // services/clientService.js
 import { api } from './api';
-import { generateNonce } from '../utils/security';
-
-// Helper function to get current timestamp in seconds
-const getCurrentTimestamp = () => Math.floor(Date.now() / 1000);
 
 // Enhanced error handling wrapper
 const handleApiCall = async (apiCall, operation) => {
@@ -41,14 +37,7 @@ const handleApiCall = async (apiCall, operation) => {
 export const clientService = {
   async getClients() {
     return handleApiCall(async () => {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
-      
-      console.log('Fetching clients with params:', { nonce, timestamp });
-      
-      const response = await api.get('/clients', {
-        params: { nonce, timestamp }
-      });
+      const response = await api.get('/clients');
       
       console.log('Raw clients response:', response.data);
       
@@ -83,24 +72,17 @@ export const clientService = {
 
   async getClient(username) {
     return handleApiCall(async () => {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
       
-      const response = await api.get(`/clients/${username}`, {
-        params: { nonce, timestamp }
-      });
+      const response = await api.get(`/clients/${username}`);
       return response.data;
     }, `getClient(${username})`);
   },
 
   async createClient({ username, password }) {
     return handleApiCall(async () => {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
       
       const response = await api.post('/clients', 
-        { username, password },
-        { params: { nonce, timestamp } }
+        { username, password }
       );
       return response.data;
     }, `createClient(${username})`);
@@ -108,12 +90,9 @@ export const clientService = {
 
   async updateClient({ username, password }) {
     return handleApiCall(async () => {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
       
       const response = await api.put(`/clients/${username}`, 
-        { username, password },
-        { params: { nonce, timestamp } }
+        { username, password }
       );
       return response.data;
     }, `updateClient(${username})`);
@@ -121,36 +100,24 @@ export const clientService = {
 
   async deleteClient(username) {
     return handleApiCall(async () => {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
       
-      const response = await api.delete(`/clients/${username}`, {
-        params: { nonce, timestamp }
-      });
+      const response = await api.delete(`/clients/${username}`);
       return response.data;
     }, `deleteClient(${username})`);
   },
 
   async enableClient(username) {
     return handleApiCall(async () => {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
       
-      const response = await api.put(`/clients/${username}/enable`, {}, {
-        params: { nonce, timestamp }
-      });
+      const response = await api.put(`/clients/${username}/enable`, {});
       return response.data;
     }, `enableClient(${username})`);
   },
 
   async disableClient(username) {
     return handleApiCall(async () => {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
       
-      const response = await api.put(`/clients/${username}/disable`, {}, {
-        params: { nonce, timestamp }
-      });
+      const response = await api.put(`/clients/${username}/disable`, {});
       return response.data;
     }, `disableClient(${username})`);
   },
@@ -158,13 +125,10 @@ export const clientService = {
   // Role management methods
   async addRoleToClient(username, roleName) {
     return handleApiCall(async () => {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
       
       const response = await api.post(
         `/clients/${username}/roles`,
-        { role_name: roleName },
-        { params: { nonce, timestamp } }
+        { role_name: roleName }
       );
       return response.data;
     }, `addRoleToClient(${username}, ${roleName})`);
@@ -172,12 +136,8 @@ export const clientService = {
 
   async removeRoleFromClient(username, roleName) {
     return handleApiCall(async () => {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
       
-      const response = await api.delete(`/clients/${username}/roles/${roleName}`, {
-        params: { nonce, timestamp }
-      });
+      const response = await api.delete(`/clients/${username}/roles/${roleName}`);
       return response.data;
     }, `removeRoleFromClient(${username}, ${roleName})`);
   },
@@ -185,25 +145,17 @@ export const clientService = {
   // Group management methods
   async addClientToGroup(groupName, username, priority = null) {
     return handleApiCall(async () => {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
       
       const data = priority ? { username, priority } : { username };
-      const response = await api.post(`/groups/${groupName}/clients`, data, {
-        params: { nonce, timestamp }
-      });
+      const response = await api.post(`/groups/${groupName}/clients`, data);
       return response.data;
     }, `addClientToGroup(${groupName}, ${username})`);
   },
 
   async removeClientFromGroup(groupName, username) {
     return handleApiCall(async () => {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
       
-      const response = await api.delete(`/groups/${groupName}/clients/${username}`, {
-        params: { nonce, timestamp }
-      });
+      const response = await api.delete(`/groups/${groupName}/clients/${username}`);
       return response.data;
     }, `removeClientFromGroup(${groupName}, ${username})`);
   },
@@ -211,11 +163,8 @@ export const clientService = {
   // Connection testing
   async testConnection() {
     return handleApiCall(async () => {
-      const timestamp = getCurrentTimestamp();
-      const nonce = generateNonce();
       
       const response = await api.get('/test-mosquitto', {
-        params: { nonce, timestamp },
         timeout: 5000
       });
       return response.data;

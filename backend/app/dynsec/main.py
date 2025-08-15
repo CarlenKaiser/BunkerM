@@ -4,45 +4,56 @@
 # You may not use this file except in compliance with the License.
 # http://www.apache.org/licenses/LICENSE-2.0
 # Distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
-
+#
+# app/dynsec/main.py
 import logging
 from fastapi import FastAPI, HTTPException, Security, Depends, Request, status, UploadFile, File, Form
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
+import firebase_admin
+from firebase_admin import credentials, auth
+
+""" from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from fastapi.responses import JSONResponse """
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import subprocess
 import os
 import json
+import ssl
 from dotenv import load_dotenv
 from enum import Enum
 from datetime import datetime, timedelta
+import secrets
 from logging.handlers import RotatingFileHandler
-import uvicorn
-import firebase_admin
-from firebase_admin import auth, credentials, exceptions as firebase_exceptions
+from pydantic import BaseModel, Field
 from password_import import router as password_import_router
-
-# Load environment variables
+import uvicorn
+# Load environment variables from .env file
 load_dotenv()
+
+
+class RequestParams(BaseModel):
+    nonce: Optional[str] = None
+    timestamp: Optional[int] = None
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 handler = RotatingFileHandler(
-    "dynsec_api_activity.log", 
-    maxBytes=10_000_000,  # 10MB
-    backupCount=5
+    "dynsec_api_activity.log", maxBytes=10000000, backupCount=5  # 10MB
 )
 logger.addHandler(handler)
 
-# Initialize Firebase Admin SDK
+# Firebase Admin SDK initialization
 try:
     firebase_config_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
     if not firebase_config_path or not os.path.exists(firebase_config_path):
-        raise ValueError("Firebase credentials file not found")
+        raise ValueError("Firebase credentials file not found at specified path")
     
     cred = credentials.Certificate(firebase_config_path)
     firebase_admin.initialize_app(cred)
@@ -54,147 +65,164 @@ except Exception as e:
 # Environment variables
 MOSQUITTO_ADMIN_USERNAME = os.getenv("MOSQUITTO_ADMIN_USERNAME")
 MOSQUITTO_ADMIN_PASSWORD = os.getenv("MOSQUITTO_ADMIN_PASSWORD")
-MOSQUITTO_IP = os.getenv("MOSQUITTO_IP", "localhost")
-MOSQUITTO_PORT = os.getenv("MOSQUITTO_PORT", "1883")
+MOSQUITTO_IP = os.getenv("MOSQUITTO_IP")
+MOSQUITTO_PORT = os.getenv("MOSQUITTO_PORT")
+API_KEY = os.getenv("API_KEY")
+
 ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost").split(",")
 
 # Base command for mosquitto_ctrl
 DYNSEC_BASE_COMMAND = [
     "mosquitto_ctrl",
-    "-h", MOSQUITTO_IP,
-    "-p", MOSQUITTO_PORT,
-    "-u", MOSQUITTO_ADMIN_USERNAME,
-    "-P", MOSQUITTO_ADMIN_PASSWORD,
+    "-h", os.getenv("MOSQUITTO_IP"),
+    "-p", os.getenv("MOSQUITTO_PORT"),
+    "-u", os.getenv("MOSQUITTO_ADMIN_USERNAME"),
+    "-P", os.getenv("MOSQUITTO_ADMIN_PASSWORD"),
     "dynsec"
 ]
 
-# Initialize FastAPI app
+# Initialize FastAPI app with versioning
 app = FastAPI(
-    title="Mosquitto DynSec API",
-    version="2.0.0",
-    docs_url="/api/v1/docs",
-    openapi_url="/api/v1/openapi.json",
+    title="Mosquitto Management API",
+    version="1.0.0",
+    docs_url="/docs",
+    openapi_url="/openapi.json",
 )
 
-# Middleware
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allow all origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.add_middleware(
-    TrustedHostMiddleware, 
-    allowed_hosts=ALLOWED_HOSTS
-)
+# Trusted Host middleware
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
-# Security
-security = HTTPBearer()
+# Import mosquitto password file
+app.include_router(password_import_router, prefix="/api/v1")
+
+async def verify_firebase_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> dict:
+    try:
+        token = credentials.credentials
+        decoded_token = auth.verify_id_token(token)
+        user_role = decoded_token.get('role', 'user')
+        
+        logger.info(f"Authenticated user: {decoded_token.get('email', 'unknown')}")
+        
+        return {
+            'uid': decoded_token['uid'],
+            'email': decoded_token.get('email'),
+            'name': decoded_token.get('name'),
+            'role': user_role,
+            'verified': decoded_token.get('email_verified', False),
+            'is_admin': user_role == 'admin',
+            'is_moderator': user_role in ['admin', 'moderator']
+        }
+    except auth.InvalidIdTokenError:
+        logger.error("Invalid Firebase ID token provided")
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    except auth.ExpiredIdTokenError:
+        logger.error("Expired Firebase ID token provided")
+        raise HTTPException(status_code=401, detail="Authentication token has expired")
+    except Exception as e:
+        logger.error(f"Authentication error: {str(e)}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
+
+# Authorization dependencies
+async def require_admin(user: dict = Depends(verify_firebase_token)) -> dict:
+    if not user.get('is_admin', False):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+async def require_moderator(user: dict = Depends(verify_firebase_token)) -> dict:
+    if not user.get('is_moderator', False):
+        raise HTTPException(status_code=403, detail="Moderator or admin access required")
+    return user
+
+
+async def log_request(request: Request):
+    """Log API request details"""
+    logger.info(
+        f"Request: {request.method} {request.url} "
+        f"Client: {request.client.host} "
+        f"User-Agent: {request.headers.get('user-agent')} "
+        f"Time: {datetime.now().isoformat()}"
+    )
+
+
+@app.middleware("https")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Strict-Transport-Security"] = (
+        "max-age=31536000; includeSubDomains"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    return response
+
 
 # Models
 class ClientCreate(BaseModel):
     username: str
     password: str
 
+
 class ClientResponse(BaseModel):
     username: str
     message: str
     success: bool
 
+
 class RoleCreate(BaseModel):
     name: str
     textname: Optional[str] = None
     acls: Optional[List[Dict[str, Any]]] = None
+    nonce: Optional[str] = None
+    timestamp: Optional[int] = None
+
 
 class GroupCreate(BaseModel):
     name: str
     textname: Optional[str] = None
+    roles: Optional[List[str]] = None
+
 
 class RoleAssignment(BaseModel):
     role_name: str
     priority: Optional[int] = 1
 
-class ACLRequest(BaseModel):
-    topic: str
-    aclType: str
-    permission: str
 
+class GroupClientAssignment(BaseModel):
+    client_username: str
+
+
+# Define enums for ACL types and permissions
 class ACLType(str, Enum):
     PUBLISH = "publishClientSend"
     SUBSCRIBE = "subscribeLiteral"
+
 
 class Permission(str, Enum):
     ALLOW = "allow"
     DENY = "deny"
 
-# Authentication
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Security(security),
-    request: Request = None
-) -> dict:
-    """Enhanced Firebase authentication with role support"""
-    try:
-        if not credentials.scheme == "Bearer":
-            logger.warning(f"Invalid auth scheme from {request.client.host if request else 'unknown'}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Invalid authentication scheme"
-            )
-        
-        decoded_token = auth.verify_id_token(credentials.credentials)
-        user_role = decoded_token.get('role', 'user')
-        
-        return {
-            'uid': decoded_token['uid'],
-            'email': decoded_token.get('email'),
-            'role': user_role,
-            'is_admin': user_role == 'admin',
-            'is_moderator': user_role in ['admin', 'moderator'],
-            'can_manage': user_role in ['admin', 'moderator']
-        }
-        
-    except firebase_exceptions.InvalidIdTokenError:
-        logger.error("Invalid Firebase ID token provided")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid authentication token"
-        )
-    except firebase_exceptions.ExpiredIdTokenError:
-        logger.error("Expired Firebase ID token provided")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Authentication token has expired"
-        )
-    except Exception as e:
-        logger.error(f"Authentication error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Authentication failed"
-        )
 
-async def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    """Require admin privileges"""
-    if not user.get('is_admin', False):
-        logger.warning(f"Unauthorized admin access attempt by {user.get('email')}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
-    return user
+# Model for ACL request
+class ACLRequest(BaseModel):
+    topic: str = Field(..., description="MQTT topic")
+    aclType: str = Field(
+        ..., description="ACL type (publishClientSend or subscribeLiteral)"
+    )
+    permission: str = Field(..., description="Permission (allow or deny)")
 
-async def require_management(user: dict = Depends(get_current_user)) -> dict:
-    """Require management privileges (admin or moderator)"""
-    if not user.get('can_manage', False):
-        logger.warning(f"Unauthorized management attempt by {user.get('email')}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Management access required"
-        )
-    return user
 
-# Utility functions
+# Mosquitto command execution with logging
 def execute_mosquitto_command(command: list, input_data: str = None) -> tuple[bool, str]:
     try:
         full_command = DYNSEC_BASE_COMMAND + command
@@ -220,37 +248,12 @@ def execute_mosquitto_command(command: list, input_data: str = None) -> tuple[bo
         logger.error(f"Error executing command: {str(e)}")
         return False, str(e)
 
-async def log_request(request: Request):
-    """Log request details"""
-    logger.info(
-        f"Request: {request.method} {request.url} "
-        f"Client: {request.client.host} "
-        f"User-Agent: {request.headers.get('user-agent')} "
-        f"Time: {datetime.now().isoformat()}"
-    )
-
-@app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    """Add security headers and log requests"""
-    await log_request(request)
-    response = await call_next(request)
-    response.headers.update({
-        "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-        "X-Content-Type-Options": "nosniff",
-        "X-Frame-Options": "DENY",
-        "X-XSS-Protection": "1; mode=block"
-    })
-    return response
-
-# Include password import router
-app.include_router(password_import_router, prefix="/api/v1")
-
-# Client Management Endpoints
+# Client management endpoints
 @app.post("/api/v1/clients", response_model=ClientResponse)
 async def create_client(
     client: ClientCreate,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     await log_request(request)
     logger.info(f"Creating new client with username: {client.username}")
@@ -311,10 +314,12 @@ async def create_client(
             detail=f"Internal server error: {str(e)}",
         )
 
+
+# List Clients Endpoint
 @app.get("/api/v1/clients")
 async def list_clients(
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """List all clients"""
     await log_request(request)
@@ -337,11 +342,13 @@ async def list_clients(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
 
+
+# Get Single Client Endpoint
 @app.get("/api/v1/clients/{username}")
 async def get_client(
     username: str,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """Get details for a specific client"""
     await log_request(request)
@@ -414,11 +421,12 @@ async def get_client(
         )
 
 
+# Enable Client Endpoint
 @app.put("/api/v1/clients/{username}/enable")
 async def enable_client(
     username: str,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """Enable a specific MQTT client"""
     await log_request(request)
@@ -444,11 +452,13 @@ async def enable_client(
             detail=f"Internal server error: {str(e)}",
         )
 
+
+# Disable Client Endpoint
 @app.put("/api/v1/clients/{username}/disable")
 async def disable_client(
     username: str,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """Disable a specific MQTT client"""
     await log_request(request)
@@ -474,11 +484,13 @@ async def disable_client(
             detail=f"Internal server error: {str(e)}",
         )
 
+
+# Remove Client Endpoint
 @app.delete("/api/v1/clients/{username}")
-async def delete_client(
+async def remove_client(
     username: str,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """Remove a specific MQTT client"""
     await log_request(request)
@@ -504,12 +516,13 @@ async def delete_client(
             detail=f"Internal server error: {str(e)}",
         )
 
+
 # Role Management Endpoints
 @app.post("/api/v1/roles")
 async def create_role(
     role: RoleCreate,
     request: Request,
-    user: dict = Depends(require_admin)
+    user: dict = Depends(require_admin) 
 ):
     """Create a new role"""
     await log_request(request)
@@ -535,12 +548,14 @@ async def create_role(
             detail=f"Internal server error: {str(e)}",
         )
 
+
+# List Roles Endpoint
 @app.get("/api/v1/roles")
 async def list_roles(
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
-    """List all roles"""
+    """List all clients"""
     await log_request(request)
     logger.info(f"Listing clients. Nonce: {nonce}, Timestamp: {timestamp}")
 
@@ -562,11 +577,13 @@ async def list_roles(
             detail=f"Internal server error: {str(e)}",
         )
 
+
+# Get Role Details Endpoint
 @app.get("/api/v1/roles/{role_name}")
 async def get_role(
     role_name: str,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """Get details for a specific role"""
     await log_request(request)
@@ -643,7 +660,7 @@ async def get_role(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}",
         )
-    
+
 
 # Role Assignment Endpoints
 @app.post("/api/v1/clients/{username}/roles")
@@ -651,7 +668,7 @@ async def add_client_role(
     username: str,
     role: RoleAssignment,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """Assign a role to a client"""
     await log_request(request)
@@ -679,12 +696,14 @@ async def add_client_role(
             detail=f"Internal server error: {str(e)}",
         )
 
+
+# Remove Role from Client
 @app.delete("/api/v1/clients/{username}/roles/{role_name}")
 async def remove_client_role(
     username: str,
     role_name: str,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """Remove a role from a client"""
     await log_request(request)
@@ -712,12 +731,14 @@ async def remove_client_role(
             detail=f"Internal server error: {str(e)}",
         )
 
+
+# Add Role to Group
 @app.post("/api/v1/groups/{group_name}/roles")
 async def add_group_role(
     group_name: str,
     role: RoleAssignment,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """Assign a role to a group"""
     await log_request(request)
@@ -747,12 +768,14 @@ async def add_group_role(
             detail=f"Internal server error: {str(e)}",
         )
 
+
+# Remove Role from Group
 @app.delete("/api/v1/groups/{group_name}/roles/{role_name}")
 async def remove_group_role(
     group_name: str,
     role_name: str,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """Remove a role from a group"""
     await log_request(request)
@@ -780,6 +803,8 @@ async def remove_group_role(
             detail=f"Internal server error: {str(e)}",
         )
 
+
+# Group Management Endpoints
 @app.post("/api/v1/groups")
 async def create_group(
     group: GroupCreate,
@@ -810,9 +835,12 @@ async def create_group(
             detail=f"Internal server error: {str(e)}",
         )
 
-# Group Management Endpoints
+
 @app.get("/api/v1/groups")
-async def list_groups(request: Request, user: dict = Depends(require_management)):
+async def list_groups(
+    request: Request,
+    user: dict = Depends(require_admin) 
+):
     """List all groups"""
     await log_request(request)
     logger.info("Fetching list of all groups")
@@ -835,11 +863,12 @@ async def list_groups(request: Request, user: dict = Depends(require_management)
             detail=f"Internal server error: {str(e)}",
         )
 
+
 @app.get("/api/v1/groups/{group_name}")
 async def get_group(
     group_name: str,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """Get details for a specific group"""
     await log_request(request)
@@ -907,11 +936,12 @@ async def get_group(
             detail=f"Internal server error: {str(e)}",
         )
 
+
 @app.delete("/api/v1/groups/{group_name}")
 async def delete_group(
     group_name: str,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """Delete a specific group"""
     await log_request(request)
@@ -937,13 +967,14 @@ async def delete_group(
             detail=f"Internal server error: {str(e)}",
         )
 
+
 # Group Client Management Endpoints
 @app.post("/api/v1/groups/{group_name}/clients")
 async def add_client_to_group(
     group_name: str,
     data: dict,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """Add a client to a group"""
     await log_request(request)
@@ -986,12 +1017,13 @@ async def add_client_to_group(
             detail=f"Internal server error: {str(e)}",
         )
 
+
 @app.delete("/api/v1/groups/{group_name}/clients/{username}")
 async def remove_client_from_group(
     group_name: str,
     username: str,
     request: Request,
-    user: dict = Depends(require_management)
+    user: dict = Depends(require_admin) 
 ):
     """Remove a client from a group"""
     await log_request(request)
@@ -1021,13 +1053,14 @@ async def remove_client_from_group(
             detail=f"Internal server error: {str(e)}",
         )
 
+
 # ACL Management Endpoints
 @app.post("/api/v1/roles/{role_name}/acls")
 async def add_role_acl(
     role_name: str,
     acl: ACLRequest,
     request: Request,
-    user: dict = Depends(require_admin)
+    user: dict = Depends(require_admin) 
 ):
     """Add an ACL to a role"""
     await log_request(request)
@@ -1077,10 +1110,12 @@ async def add_role_acl(
             detail=f"Internal server error: {str(e)}",
         )
 
+
+# remove role
 @app.delete("/api/v1/roles/{role_name}")
 async def delete_role(
     role_name: str,
-    user: dict = Depends(require_admin)
+    user: dict = Depends(require_admin) 
 ):
     command = ["deleteRole", role_name]
     success, result = execute_mosquitto_command(command)
@@ -1088,13 +1123,13 @@ async def delete_role(
         raise HTTPException(status_code=400, detail=result)
     return {"message": f"Role {role_name} deleted successfully"}
 
+
 @app.delete("/api/v1/roles/{role_name}/acls")
 async def remove_role_acl(
     role_name: str,
     acl_type: ACLType,
     topic: str,
-    request: Request,
-    user: dict = Depends(require_admin)
+    user: dict = Depends(require_admin) 
 ):
     try:
         logger.debug(f"Removing ACL from role {role_name}: {acl_type=}, {topic=}")
@@ -1114,7 +1149,8 @@ async def remove_role_acl(
         logger.error(f"Error removing ACL: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to remove ACL: {str(e)}")
 
-# Health Check
+
+# Add a health check endpoint
 @app.get("/api/v1/health")
 async def health_check(request: Request):
     """Health check endpoint"""
@@ -1124,6 +1160,7 @@ async def health_check(request: Request):
         "timestamp": datetime.now().isoformat(),
         "version": "1.0.0",
     }
+
 
 if __name__ == "__main__":
     # Run the application
