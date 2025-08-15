@@ -11,10 +11,7 @@ import { getRuntimeConfig } from '@/config/runtime';
 
 const config = getRuntimeConfig();
 const api = axios.create({
-  baseURL: config.AWS_BRIDGE_API_URL,
-  headers: {
-    'X-API-Key': import.meta.env.VITE_API_KEY
-  }
+  baseURL: config.AWS_BRIDGE_API_URL
 });
 
 export const awsBridgeService = {

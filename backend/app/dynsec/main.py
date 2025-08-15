@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Security, Depends, Request, status, 
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import firebase_admin
 from firebase_admin import credentials, auth
 
@@ -34,7 +35,7 @@ from password_import import router as password_import_router
 import uvicorn
 # Load environment variables from .env file
 load_dotenv()
-
+security = HTTPBearer()
 
 class RequestParams(BaseModel):
     nonce: Optional[str] = None
