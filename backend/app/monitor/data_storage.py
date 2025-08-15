@@ -16,19 +16,23 @@ class HistoricalDataStorage:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Single table that mimics the JSON structure
+        # Remove comments from SQL statements
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS stats (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            data_type TEXT NOT NULL,  # 'hourly', 'daily_messages', or 'daily'
-            json_data TEXT NOT NULL,  # Stores exact JSON structure
-            timestamp TEXT           # For hourly data only
-        )
+            CREATE TABLE IF NOT EXISTS stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                data_type TEXT NOT NULL,
+                json_data TEXT NOT NULL,
+                timestamp TEXT
+            )
         """)
         
-        # Indexes for faster lookups
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_data_type ON stats(data_type)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON stats(timestamp)")
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_data_type ON stats(data_type)
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_timestamp ON stats(timestamp)
+        """)
         
         conn.commit()
         return conn
