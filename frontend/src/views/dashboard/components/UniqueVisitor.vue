@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, onMounted, onUnmounted } from 'vue';
 import { getInfo, getdarkPrimary, getLightBorder, getSecondary } from './UpdateColors';
 import type { ApexOptions } from 'apexcharts';
+import { mdiReload } from '@mdi/js';
 
 interface ByteStats {
   timestamps: string[];
@@ -32,6 +33,11 @@ const props = withDefaults(defineProps<Props>(), {
     }
   })
 });
+
+// Emit events for refresh functionality
+const emit = defineEmits<{
+  refresh: []
+}>();
 
 // Enhanced formatBytes function with proper typing
 const formatBytes = (bytes: number): string => {
@@ -79,23 +85,6 @@ const filterDataByTimeRange = (data: ByteStats, hours: number): ByteStats => {
     bytes_sent: filteredIndexes.map((i: number) => data.bytes_sent[i])
   };
 };
-
-// Define type for tooltip formatter context
-interface TooltipFormatterContext {
-  series: number[][];
-  seriesIndex: number;
-  dataPointIndex: number;
-  w: {
-    config: {
-      series: Array<{
-        data: Array<{ x: number; y: number }>; // x is number (timestamp in ms)
-      }>;
-    };
-    globals: {
-      categoryLabels: string[];
-    };
-  };
-}
 
 // Last 6 hours view chart options with proper typing
 const chartOptions1 = computed((): ApexOptions => {
@@ -312,19 +301,85 @@ const dailySeriesData = computed((): SeriesData[] => {
   ];
 });
 
+// State for tabs and refresh functionality
 const tab = ref('one');
+const isLoading = ref(false);
+const autoRefresh = ref(true);
+const refreshInterval = ref<number | null>(null);
+
+// Refresh functionality
+const handleRefresh = () => {
+  isLoading.value = true;
+  emit('refresh');
+  // Simulate loading state (parent component should handle actual loading)
+  setTimeout(() => {
+    isLoading.value = false;
+  }, 1000);
+};
+
+const toggleAutoRefresh = () => {
+  autoRefresh.value = !autoRefresh.value;
+  if (autoRefresh.value) {
+    refreshInterval.value = window.setInterval(handleRefresh, 5000);
+  } else if (refreshInterval.value !== null) {
+    clearInterval(refreshInterval.value);
+    refreshInterval.value = null;
+  }
+};
+
+// Setup auto-refresh on mount
+onMounted(() => {
+  if (autoRefresh.value) {
+    refreshInterval.value = window.setInterval(handleRefresh, 5000);
+  }
+});
+
+// Cleanup on unmount
+onUnmounted(() => {
+  if (refreshInterval.value !== null) {
+    clearInterval(refreshInterval.value);
+    refreshInterval.value = null;
+  }
+});
 </script>
 
 <template>
   <v-card class="title-card" variant="text">
     <v-card-item class="pb-2 px-0 pt-0">
-      <div class="d-flex justify-space-between">
+      <div class="d-flex justify-space-between align-center">
         <v-card-title class="text-h5">Byte Transfer Rate (15min intervals)</v-card-title>
-        <div class="d-flex flex-wrap">
+        <div class="d-flex align-center">
+          <!-- Tab buttons -->
           <v-tabs v-model="tab" color="primary" class="tabBtn" density="compact" hide-slider>
             <v-tab value="one" class="mr-1" variant="outlined" rounded="md">Last 6h</v-tab>
-            <v-tab value="two" variant="outlined" rounded="md">Daily</v-tab>
+            <v-tab value="two" class="mr-2" variant="outlined" rounded="md">Daily</v-tab>
           </v-tabs>
+          
+          <!-- Refresh controls -->
+          <v-btn
+            :color="autoRefresh ? 'primary' : 'default'"
+            variant="outlined"
+            size="small"
+            class="ml-2"
+            @click="toggleAutoRefresh"
+            :title="autoRefresh ? 'Auto-refresh enabled' : 'Auto-refresh disabled'"
+          >
+            <v-icon :icon="mdiReload" />
+            <span class="ml-1">{{ autoRefresh ? 'Auto' : 'Manual' }}</span>
+          </v-btn>
+          
+          <v-btn
+            color="primary"
+            variant="outlined"
+            size="small"
+            class="ml-2"
+            @click="handleRefresh"
+            :loading="isLoading"
+            :disabled="isLoading"
+          >
+            <v-icon :icon="mdiReload" />
+            <span class="ml-1">Refresh</span>
+          </v-btn>
         </div>
       </div>
     </v-card-item>

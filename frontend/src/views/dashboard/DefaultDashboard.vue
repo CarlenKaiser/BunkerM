@@ -303,7 +303,10 @@ onUnmounted((): void => {
       <!-- Message Rates Chart -->
       <v-col cols="12">
         <!-- Keep UniqueVisitor prop shape intact -->
-        <UniqueVisitor :stats="visitorStats" />
+        <UniqueVisitor
+          :stats="visitorStats"
+          @refresh="fetchStats"
+        />
       </v-col>
     </v-row>
   </div>
