@@ -22,7 +22,23 @@ export const groupService = {
         'Authorization': `Bearer ${idToken}`
       }
     });
-    return response.data.groups.split('\n').filter(Boolean).map(name => ({ name }));
+    
+    // Handle different response formats
+    if (!response.data) {
+      return [];
+    }
+    
+    if (Array.isArray(response.data)) {
+      return response.data;
+    }
+    
+    if (response.data.groups) {
+      return typeof response.data.groups === 'string' 
+        ? response.data.groups.split('\n').filter(Boolean).map(name => ({ name }))
+        : [];
+    }
+    
+    return [];
   },
 
   async getGroup(name) {
