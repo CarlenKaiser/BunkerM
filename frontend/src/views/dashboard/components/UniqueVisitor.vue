@@ -168,11 +168,8 @@ const chartOptions1 = computed((): ApexOptions => {
     tooltip: {
       theme: 'dark',
       x: {
-        formatter: function (val: number, opts?: { seriesIndex: number, dataPointIndex: number, w: any }): string {
-          if (!opts) return '';
-          const timestamp = opts.w.config.series[0].data[opts.dataPointIndex]?.x || 
-                          opts.w.globals.categoryLabels[opts.dataPointIndex];
-          return formatTime(new Date(timestamp).toISOString());
+        formatter: function (val: number): string {
+          return formatTime(val);
         }
       },
       y: {
