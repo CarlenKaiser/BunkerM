@@ -6,7 +6,7 @@
 # Distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
 # */
 import axios from 'axios';
-import { getRuntimeConfig } from '@/api/config/runtime';
+import { getRuntimeConfig } from '@/config/runtime';
 import { getAuth, getIdToken } from 'firebase/auth';
 
 const config = getRuntimeConfig();
