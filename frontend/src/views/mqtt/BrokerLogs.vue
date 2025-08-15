@@ -67,33 +67,59 @@ const fetchLogs = async () => {
       .map((log: string | LogData, index: number): LogEntry => {
         // Handle both string and object formats
         if (typeof log === 'string') {
-          // Improved pattern for Mosquitto logs
-          const mosquittoPattern = /^(\d+):\s*(Warning|Error|Notice|Info|Debug)\s*:\s*(.*)/i;
-          const match = log.match(mosquittoPattern);
+          // For raw string logs, try to extract level from message content
+          const message = log.trim();
+          let level = 'INFO'; // default level
           
-          if (match) {
-            const [_, timestamp, level, message] = match;
-            return {
-              id: index,
-              timestamp: parseInt(timestamp, 10) * 1000,
-              level: level.toUpperCase(),
-              message: message.trim()
-            };
+          // Check message content for error indicators
+          if (message.toLowerCase().includes('error') || 
+              message.toLowerCase().includes('failed') ||
+              message.toLowerCase().includes('refused') ||
+              message.toLowerCase().includes('denied')) {
+            level = 'ERROR';
+          } else if (message.toLowerCase().includes('warning') || 
+                     message.toLowerCase().includes('warn')) {
+            level = 'WARNING';
+          } else if (message.toLowerCase().includes('debug')) {
+            level = 'DEBUG';
+          } else if (message.toLowerCase().includes('connection') ||
+                     message.toLowerCase().includes('disconnect') ||
+                     message.toLowerCase().includes('subscribe') ||
+                     message.toLowerCase().includes('unsubscribe')) {
+            level = 'NOTICE';
           }
           
-          // Fallback for other formats
           return {
             id: index,
             timestamp: null,
-            level: 'INFO',
-            message: log
+            level: level,
+            message: message
           };
         } else {
-          // Handle object format
+          // Handle object format - extract level from message or use provided level
+          let level = log.level || 'INFO';
+          
+          // If no level provided, try to infer from message
+          if (!log.level && log.message) {
+            const message = log.message.toLowerCase();
+            if (message.includes('error') || message.includes('failed') || 
+                message.includes('refused') || message.includes('denied')) {
+              level = 'ERROR';
+            } else if (message.includes('warning') || message.includes('warn')) {
+              level = 'WARNING';
+            } else if (message.includes('debug')) {
+              level = 'DEBUG';
+            } else if (message.includes('connection') || message.includes('disconnect') ||
+                       message.includes('subscribe') || message.includes('unsubscribe') ||
+                       message.includes('pingreq') || message.includes('pingresp')) {
+              level = 'NOTICE';
+            }
+          }
+          
           return {
             id: index,
             timestamp: log.timestamp ? new Date(log.timestamp).getTime() : null,
-            level: log.level || 'INFO',
+            level: level.toUpperCase(),
             message: log.message || ''
           };
         }
