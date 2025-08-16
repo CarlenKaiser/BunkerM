@@ -11,7 +11,7 @@ import { api } from './api';
 export const groupService = {
   async getGroups() {
     try {
-      const response = await api.get('/groups');
+      const response = await api.get('/api/dynsec/groups');
       
       // Log the complete response for debugging
       console.log('=== GROUPS API DEBUG RESPONSE ===');
@@ -111,13 +111,13 @@ export const groupService = {
 
   async getGroup(name) {
     
-    const response = await api.get(`/groups/${name}`);
+    const response = await api.get(`/api/dynsec/groups/${name}`);
     return response.data;
   },
 
   async createGroup(name) {
     
-    const response = await api.post('/groups', 
+    const response = await api.post('/api/dynsec/groups', 
       { name },
     );
     return response.data;
@@ -125,14 +125,14 @@ export const groupService = {
 
   async deleteGroup(name) {
     
-    const response = await api.delete(`/groups/${name}`);
+    const response = await api.delete(`/api/dynsec/groups/${name}`);
     return response.data;
   },
 
   async addRoleToGroup(groupName, roleName) {
     
     const response = await api.post(
-      `/groups/${groupName}/roles`,
+      `/api/dynsec/groups/${groupName}/roles`,
       { role_name: roleName },
     );
     return response.data;
@@ -151,7 +151,7 @@ export const groupService = {
     }
   
     const response = await api.post(
-      `/groups/${groupName}/clients`,
+      `/api/dynsec/groups/${groupName}/clients`,
       data,
     );
   
@@ -161,7 +161,7 @@ export const groupService = {
   async removeClientFromGroup(groupName, username) {
     
     const response = await api.delete(
-      `/groups/${groupName}/clients/${username}`,
+      `/api/dynsec/groups/${groupName}/clients/${username}`,
     );
     return response.data;
   },
@@ -169,7 +169,7 @@ export const groupService = {
   async removeRoleFromGroup(groupName, roleName) {
     
     const response = await api.delete(
-      `/groups/${groupName}/roles/${roleName}`,
+      `/api/dynsec/groups/${groupName}/roles/${roleName}`,
     );
     return response.data;
   }
