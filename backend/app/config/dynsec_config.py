@@ -17,12 +17,6 @@ from pydantic import BaseModel
 import firebase_admin
 from firebase_admin import auth
 
-# Router setup with default Firebase auth
-router = APIRouter(
-    tags=["dynsec_config"],
-    dependencies=[Depends(verify_firebase_token)]  # Default auth for all routes
-)
-
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -148,6 +142,12 @@ async def require_admin(user: dict = Depends(verify_firebase_token)) -> dict:
             detail="Admin access required"
         )
     return user
+
+# Router setup with default Firebase auth - NOW DEFINED AFTER THE FUNCTION
+router = APIRouter(
+    tags=["dynsec_config"],
+    dependencies=[Depends(verify_firebase_token)]  # Now this function is defined
+)
 
 def read_dynsec_json() -> Dict[str, Any]:
     """Read the dynamic security JSON file"""
