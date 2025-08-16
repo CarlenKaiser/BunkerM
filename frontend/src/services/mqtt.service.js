@@ -13,7 +13,6 @@ const config = getRuntimeConfig();
 
 // Create axios instance
 const api = axios.create({
-    baseURL: config.DYNSEC_API_URL,
     headers: {
         'Content-Type': 'application/json',
     },
@@ -63,12 +62,12 @@ api.interceptors.response.use(
 export const mqttService = {
 
   async getClients() {
-    const response = await api.get('/clients');
+    const response = await api.get('/api/dynsec/clients');
     return response.data.clients.split('\n').filter(Boolean).map(username => ({ username }));
   },
 
   async getClient(username) {
-    const response = await api.get(`/clients/${username}`);
+    const response = await api.get(`/api/dynsec/clients/${username}`);
     //console.log('Get client details response:', response);
     return response.data;
   },
@@ -76,7 +75,7 @@ export const mqttService = {
 
   //############## Client management service #########################//
   async createClient({ username, password }) {
-    const response = await api.post('/clients', {
+    const response = await api.post('/api/dynsec/clients', {
       username: username,
       password: password
     });
@@ -86,7 +85,7 @@ export const mqttService = {
 
 
   async deleteClient(username) {
-    const response = await api.delete(`/clients/${username}`);
+    const response = await api.delete(`/api/dynsec/clients/${username}`);
     //console.log(response);
     return response.data;
   },
@@ -94,7 +93,7 @@ export const mqttService = {
 
 
   async updateClient({ username, password }) {
-    const response = await api.put(`/clients/${username}`, {
+    const response = await api.put(`/api/dynsec/clients/${username}`, {
       username: username,
       password: password
     });
@@ -105,13 +104,13 @@ export const mqttService = {
 
   async addClientToGroup(groupName, username, priority = null) {
     const data = priority ? { username, priority } : { username };
-    const response = await api.post(`/groups/${groupName}/clients`, data);
+    const response = await api.post(`/api/dynsec/groups/${groupName}/clients`, data);
     //console.log('Add client to group response:', response);
     return response.data;
   },
 
   async removeClientFromGroup(groupName, username) {
-    const response = await api.delete(`/groups/${groupName}/clients/${username}`);
+    const response = await api.delete(`/api/dynsec/groups/${groupName}/clients/${username}`);
     //console.log('Remove client from group response:', response);
     return response.data;
   },
@@ -120,7 +119,7 @@ export const mqttService = {
 
   // Create Role
   async createRole(name) {
-    const response = await api.post('/roles', {
+    const response = await api.post('/api/dynsec/roles', {
       name: name
     });
     //console.log('Create role response:', response);
@@ -129,7 +128,7 @@ export const mqttService = {
 
   // List Roles
   async getRoles() {
-    const response = await api.get('/roles');
+    const response = await api.get('/api/dynsec/roles');
     //console.log('Get roles response:', response);
     // Split the string into array and map to objects
     return response.data.roles.split('\n').filter(Boolean).map(name => ({ name }));
@@ -137,14 +136,14 @@ export const mqttService = {
 
   // Get Role Details
   async getRole(name) {
-    const response = await api.get(`/roles/${name}`);
+    const response = await api.get(`/api/dynsec/roles/${name}`);
     //console.log('Get role details response:', response);
     return response.data;
   },
 
   // Delete Role
   async deleteRole(name) {
-    const response = await api.delete(`/roles/${name}`);
+    const response = await api.delete(`/api/dynsec/roles/${name}`);
     //console.log('Delete role response:', response);
     return response.data;
   },
@@ -153,7 +152,7 @@ export const mqttService = {
 
   // Create Group
   async createGroup(name) {
-    const response = await api.post('/groups', {
+    const response = await api.post('/api/dynsec/groups', {
       name: name
     });
     //console.log('Create group response:', response);
@@ -162,7 +161,7 @@ export const mqttService = {
 
   // List Groups
   async getGroups() {
-    const response = await api.get('/groups');
+    const response = await api.get('/api/dynsec/groups');
     //console.log('Get groups response:', response);
     return response.data;
   },
@@ -171,14 +170,14 @@ export const mqttService = {
 
   // Get Group Details
   async getGroup(name) {
-    const response = await api.get(`/groups/${name}`);
+    const response = await api.get(`/api/dynsec/groups/${name}`);
     //console.log('Get group details response:', response);
     return response.data;
   },
 
   // Delete Group
   async deleteGroup(name) {
-    const response = await api.delete(`/groups/${name}`);
+    const response = await api.delete(`/api/dynsec/groups/${name}`);
     //console.log('Delete group response:', response);
     return response.data;
   },
@@ -187,7 +186,7 @@ export const mqttService = {
 
   // Role Assignment Methods
   async addRoleToClient(username, roleName) {
-    const response = await api.post(`/clients/${username}/roles`, {
+    const response = await api.post(`/api/dynsec/clients/${username}/roles`, {
       role_name: roleName
     });
     //console.log('Add role to client response:', response);
@@ -195,13 +194,13 @@ export const mqttService = {
   },
 
   async removeRoleFromClient(username, roleName) {
-    const response = await api.delete(`/clients/${username}/roles/${roleName}`);
+    const response = await api.delete(`/api/dynsec/clients/${username}/roles/${roleName}`);
     //console.log('Remove role from client response:', response);
     return response.data;
   },
 
   async addRoleToGroup(groupName, roleName) {
-    const response = await api.post(`/groups/${groupName}/roles`, {
+    const response = await api.post(`/api/dynsec/groups/${groupName}/roles`, {
       role_name: roleName
     });
     //console.log('Add role to group response:', response);
@@ -209,7 +208,7 @@ export const mqttService = {
   },
 
   async removeRoleFromGroup(groupName, roleName) {
-    const response = await api.delete(`/groups/${groupName}/roles/${roleName}`);
+    const response = await api.delete(`/api/dynsec/groups/${groupName}/roles/${roleName}`);
     //console.log('Remove role from group response:', response);
     return response.data;
   },
@@ -220,7 +219,7 @@ export const mqttService = {
   // In mqtt.service.js
   async addRoleACL(roleName, aclData) {
     //console.log('Adding ACL:', { roleName, aclData }); // Debug log
-    const response = await api.post(`/roles/${roleName}/acls`, {
+    const response = await api.post(`/api/dynsec/roles/${roleName}/acls`, {
       topic: aclData.topic,
       aclType: aclData.aclType,
       permission: aclData.permission
@@ -293,7 +292,7 @@ async getMosquittoConfig() {
   // Save Mosquitto configuration
 async saveMosquittoConfig(configData) {
   try {
-    const response = await api.post('/api/api/config/mosquitto-config', configData);
+    const response = await api.post('/api/config/mosquitto-config', configData);
     return response.data;
   } catch (error) {
     console.error('Error saving Mosquitto configuration:', error);
