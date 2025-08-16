@@ -10,7 +10,7 @@ from contextlib import contextmanager
 class HistoricalDataStorage:
     def __init__(self, db_path="/app/monitor/data/historical_data.db"):
         self.db_path = db_path
-        self.lock = threading.RLock()  # Re-entrant lock for thread safety
+        self.lock = threading.RLock()
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
     
@@ -33,14 +33,14 @@ class HistoricalDataStorage:
         finally:
             if conn:
                 conn.close()
-    
+
     def _init_db(self):
-        """Initialize database with JSON-compatible schema and better indexing"""
+        """Initialize database with proper schema validation"""
         with self.lock:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # Create main stats table
+                # 1. First create the stats table with all columns
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS stats (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,13 +51,22 @@ class HistoricalDataStorage:
                     )
                 """)
                 
-                # Create indexes for better query performance
+                # 2. Verify the table has the created_at column
+                cursor.execute("PRAGMA table_info(stats)")
+                columns = [col[1] for col in cursor.fetchall()]
+                
+                # 3. Add column if it doesn't exist
+                if 'created_at' not in columns:
+                    print("Adding missing created_at column to stats table")
+                    cursor.execute("ALTER TABLE stats ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP")
+                
+                # 4. Now create indexes safely
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_data_type ON stats(data_type)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON stats(timestamp)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_data_type_timestamp ON stats(data_type, timestamp)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_created_at ON stats(created_at)")
                 
-                # Create a separate table for message counts with better structure
+                # 5. Create daily_message_counts table
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS daily_message_counts (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
