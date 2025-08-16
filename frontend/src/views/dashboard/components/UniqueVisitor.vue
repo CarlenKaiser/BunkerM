@@ -88,6 +88,7 @@ const filterDataByTimeRange = (data: ByteStats, hours: number): ByteStats => {
 
 // Last 6 hours view chart options with proper typing
 const chartOptions1 = computed((): ApexOptions => {
+  const dataLength = sixHourSeriesData.value[0]?.data.length || 0
   return {
     chart: {
       type: 'area',
@@ -125,6 +126,8 @@ const chartOptions1 = computed((): ApexOptions => {
     },
     xaxis: {
       type: 'datetime',
+      tickPlacement: 'on',
+      tickAmount: dataLength, 
       labels: {
         rotateAlways: true,
         rotate: -45,
@@ -143,7 +146,6 @@ const chartOptions1 = computed((): ApexOptions => {
       axisTicks: {
         color: getLightBorder.value
       },
-      tickAmount: 8
     },
     yaxis: {
       labels: {
@@ -170,6 +172,7 @@ const chartOptions1 = computed((): ApexOptions => {
 
 // Daily view chart options with proper typing
 const chartOptions2 = computed((): ApexOptions => {
+  const dataLength = dailySeriesData.value[0]?.data.length || 0;
   return {
     chart: {
       type: 'area',
@@ -207,6 +210,8 @@ const chartOptions2 = computed((): ApexOptions => {
     },
     xaxis: {
       type: 'datetime',
+      tickPlacement: 'on',
+      tickAmount: dataLength,
       labels: {
         rotateAlways: true,
         rotate: -45,
@@ -224,8 +229,7 @@ const chartOptions2 = computed((): ApexOptions => {
       },
       axisTicks: {
         color: getLightBorder.value
-      },
-      tickAmount: 12
+      }
     },
     yaxis: {
       labels: {
