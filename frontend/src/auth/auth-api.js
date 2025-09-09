@@ -155,24 +155,42 @@ app.put('/api/auth/users/:uid', verifyFirebaseToken, requireAdmin, async (req, r
   }
 
   try {
+    // First, get the current user to see existing custom claims
+    const currentUser = await admin.auth().getUser(uid);
+    const existingClaims = currentUser.customClaims || {};
+
+    // Update profile fields
     const updateData = {};
     if (displayName !== undefined) updateData.displayName = displayName;
     if (photoURL !== undefined) updateData.photoURL = photoURL;
     if (disabled !== undefined) updateData.disabled = disabled;
 
-    const updatedUser = await admin.auth().updateUser(uid, updateData);
-
-    // Update custom claims (roles)
-    if (role !== undefined) {
-      if (role && role.trim()) {
-        await admin.auth().setCustomUserClaims(uid, { role: role.trim() });
-      } else {
-        await admin.auth().setCustomUserClaims(uid, { role: 'user' });
-      }
+    let updatedUser;
+    if (Object.keys(updateData).length > 0) {
+      updatedUser = await admin.auth().updateUser(uid, updateData);
+    } else {
+      updatedUser = currentUser;
     }
 
-    // Fetch updated claims to return
+    // Update custom claims (roles) - PRESERVE EXISTING CLAIMS
+    if (role !== undefined) {
+      const newClaims = { ...existingClaims };
+      
+      if (role && role.trim()) {
+        newClaims.role = role.trim();
+      } else {
+        newClaims.role = 'user';
+      }
+      
+      console.log(`Setting custom claims for ${uid}:`, newClaims);
+      await admin.auth().setCustomUserClaims(uid, newClaims);
+    }
+
+    // Fetch the fully updated user with new claims
     const refreshedUser = await admin.auth().getUser(uid);
+    
+    // Log for debugging
+    console.log(`User ${uid} updated successfully. Claims:`, refreshedUser.customClaims);
 
     res.json({
       message: 'User updated successfully',
@@ -184,6 +202,7 @@ app.put('/api/auth/users/:uid', verifyFirebaseToken, requireAdmin, async (req, r
       customClaims: refreshedUser.customClaims || {},
     });
   } catch (error) {
+    console.error(`Error updating user ${uid}:`, error);
     log(`Error updating user ${uid}: ${error.message}`);
     res.status(500).json({ error: 'Failed to update user', details: error.message });
   }

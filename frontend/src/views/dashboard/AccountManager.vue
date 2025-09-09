@@ -18,12 +18,13 @@ interface FirebaseUserRecord {
 }
 
 const authStore = useAuthStore();
-const users = ref<User[]>([]);
+const users = ref([]);
 const showConfirmDialog = ref(false);
-const userToDelete = ref<User | null>(null);
+const userToDelete = ref(null);
 const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
+const loadingUsers = ref(new Set());
 
 const currentUser = computed(() => authStore.user);
 
@@ -85,18 +86,39 @@ async function deleteUser() {
 
 async function updateUserRole(user: User, newRole: string) {
   if (user.role === newRole) return;
-
+  
+  // Store the original role in case we need to revert
+  const originalRole = user.role;
+  
+  // Add user to loading set
+  loadingUsers.value.add(user.id);
+  
   try {
+    // Update the API first
     await api.put(`/users/${user.id}`, { role: newRole });
-
+    
+    // Only update local state after successful API call
     const idx = users.value.findIndex((u: User) => u.id === user.id);
     if (idx !== -1) {
       users.value[idx].role = newRole;
     }
+    
     showSnackbar(`Role updated for ${user.email} to ${newRole}`);
   } catch (error) {
+    // Revert the local change if API call failed
+    const idx = users.value.findIndex((u: User) => u.id === user.id);
+    if (idx !== -1) {
+      users.value[idx].role = originalRole;
+    }
+    
     showSnackbar('Failed to update role', 'error');
-    console.error(error);
+    console.error('Role update error:', error);
+    
+    // Optional: Reload users to ensure we have the correct state
+    await loadUsers();
+  } finally {
+    // Remove user from loading set
+    loadingUsers.value.delete(user.id);
   }
 }
 
@@ -163,7 +185,8 @@ onMounted(() => {
                       dense
                       outlined
                       hide-details
-                      :disabled="user.id === currentUser?.id"
+                      :disabled="user.id === currentUser?.id || loadingUsers.has(user.id)"
+                      :loading="loadingUsers.has(user.id)"
                       @update:model-value="(newRole: string) => updateUserRole(user, newRole)"
                     ></v-select>
                   </td>
