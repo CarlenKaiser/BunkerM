@@ -20,7 +20,10 @@ interface FirebaseUserRecord {
 const authStore = useAuthStore();
 const users = ref([]);
 const showConfirmDialog = ref(false);
+const showRoleDialog = ref(false);
 const userToDelete = ref(null);
+const userToEdit = ref(null);
+const selectedRole = ref('');
 const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
@@ -66,6 +69,56 @@ function confirmDeleteUser(user: User) {
   showConfirmDialog.value = true;
 }
 
+function openRoleDialog(user: User) {
+  userToEdit.value = user;
+  selectedRole.value = user.role;
+  showRoleDialog.value = true;
+}
+
+function closeRoleDialog() {
+  showRoleDialog.value = false;
+  userToEdit.value = null;
+  selectedRole.value = '';
+}
+
+async function saveUserRole() {
+  if (!userToEdit.value || userToEdit.value.role === selectedRole.value) {
+    closeRoleDialog();
+    return;
+  }
+
+  // Add user to loading set
+  loadingUsers.value.add(userToEdit.value.id);
+  
+  try {
+    const api = getApiInstance();
+    
+    // Update the API
+    const response = await api.put(`/users/${userToEdit.value.id}`, { 
+      role: selectedRole.value 
+    });
+    
+    console.log('Role update response:', response.data);
+    
+    // Update local state
+    const idx = users.value.findIndex((u: User) => u.id === userToEdit.value?.id);
+    if (idx !== -1) {
+      users.value[idx].role = selectedRole.value;
+    }
+    
+    showSnackbar(`Role updated for ${userToEdit.value.email} to ${selectedRole.value}`);
+    closeRoleDialog();
+  } catch (error: any) {
+    console.error('Role update error:', error);
+    
+    const errorMessage = error.response?.data?.error || 'Failed to update role';
+    showSnackbar(errorMessage, 'error');
+  } finally {
+    // Remove user from loading set
+    loadingUsers.value.delete(userToEdit.value.id);
+  }
+}
+
 async function deleteUser() {
   if (!userToDelete.value) return;
 
@@ -86,52 +139,6 @@ async function deleteUser() {
   }
 
   showConfirmDialog.value = false;
-}
-
-async function updateUserRole(user: User, newRole: string) {
-  if (user.role === newRole) return;
-  
-  // Store the original role in case we need to revert
-  const originalRole = user.role;
-  
-  // Add user to loading set
-  loadingUsers.value.add(user.id);
-  
-  try {
-    const api = getApiInstance();
-    
-    // Update the API first
-    const response = await api.put(`/users/${user.id}`, { 
-      role: newRole 
-    });
-    
-    console.log('Role update response:', response.data);
-    
-    // Only update local state after successful API call
-    const idx = users.value.findIndex((u: User) => u.id === user.id);
-    if (idx !== -1) {
-      users.value[idx].role = newRole;
-    }
-    
-    showSnackbar(`Role updated for ${user.email} to ${newRole}`);
-  } catch (error: any) {
-    console.error('Role update error:', error);
-    
-    // Revert the local change if API call failed
-    const idx = users.value.findIndex((u: User) => u.id === user.id);
-    if (idx !== -1) {
-      users.value[idx].role = originalRole;
-    }
-    
-    const errorMessage = error.response?.data?.error || 'Failed to update role';
-    showSnackbar(errorMessage, 'error');
-    
-    // Reload users to ensure we have the correct state
-    await loadUsers();
-  } finally {
-    // Remove user from loading set
-    loadingUsers.value.delete(user.id);
-  }
 }
 
 async function resetAllData() {
@@ -178,7 +185,7 @@ onMounted(() => {
                 <tr>
                   <th>Name</th>
                   <th>Email</th>
-                  <th>Role</th>
+                  <th>Current Role</th>
                   <th>Created</th>
                   <th>Actions</th>
                 </tr>
@@ -192,19 +199,22 @@ onMounted(() => {
                   <td>{{ user.firstName }} {{ user.lastName }}</td>
                   <td>{{ user.email }}</td>
                   <td>
-                    <v-select
-                      :items="['admin', 'user', 'moderator']"
-                      v-model="user.role"
-                      dense
-                      outlined
-                      hide-details
-                      :disabled="user.id === currentUser?.id || loadingUsers.has(user.id)"
-                      :loading="loadingUsers.has(user.id)"
-                      @update:model-value="(newRole: string) => updateUserRole(user, newRole)"
-                    ></v-select>
+                    <v-chip :color="user.role === 'admin' ? 'error' : user.role === 'moderator' ? 'warning' : 'primary'">
+                      {{ user.role }}
+                    </v-chip>
                   </td>
                   <td>{{ new Date(user.createdAt).toLocaleString() }}</td>
                   <td>
+                    <v-btn
+                      color="primary"
+                      size="small"
+                      @click="openRoleDialog(user)"
+                      :disabled="user.id === currentUser?.id || loadingUsers.has(user.id)"
+                      :loading="loadingUsers.has(user.id)"
+                      class="mr-2"
+                    >
+                      Manage Role
+                    </v-btn>
                     <v-btn
                       icon
                       color="error"
@@ -212,7 +222,7 @@ onMounted(() => {
                       @click="confirmDeleteUser(user)"
                       :disabled="user.id === currentUser?.id"
                     >
-                      <TrashIcon stroke-width="1.5" size="22" />
+                      <v-icon>mdi-delete</v-icon>
                     </v-btn>
                   </td>
                 </tr>
@@ -223,7 +233,7 @@ onMounted(() => {
       </v-col>
     </v-row>
 
-    <!-- Confirmation Dialog -->
+    <!-- Delete Confirmation Dialog -->
     <v-dialog v-model="showConfirmDialog" max-width="500px">
       <v-card>
         <v-card-title class="text-h5">Confirm Delete</v-card-title>
@@ -236,6 +246,41 @@ onMounted(() => {
           <v-spacer></v-spacer>
           <v-btn color="primary" variant="text" @click="showConfirmDialog = false">Cancel</v-btn>
           <v-btn color="error" variant="flat" @click="deleteUser">Delete</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Role Management Dialog -->
+    <v-dialog v-model="showRoleDialog" max-width="500px">
+      <v-card>
+        <v-card-title class="text-h5">
+          Manage Role for {{ userToEdit?.firstName }} {{ userToEdit?.lastName }}
+        </v-card-title>
+        <v-card-text>
+          <v-select
+            label="Select Role"
+            :items="['admin', 'moderator', 'user']"
+            v-model="selectedRole"
+            outlined
+            dense
+            class="mt-4"
+          ></v-select>
+          <v-alert type="info" class="mt-4" v-if="userToEdit?.id === currentUser?.id">
+            <strong>Note:</strong> You cannot change your own role.
+          </v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn color="primary" variant="text" @click="closeRoleDialog">Cancel</v-btn>
+          <v-btn 
+            color="primary" 
+            variant="flat" 
+            @click="saveUserRole"
+            :disabled="userToEdit?.id === currentUser?.id || selectedRole === userToEdit?.role"
+            :loading="loadingUsers.has(userToEdit?.id || '')"
+          >
+            Save Role
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
