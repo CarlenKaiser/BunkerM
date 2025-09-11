@@ -24,19 +24,22 @@ const userToDelete = ref(null);
 const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
-const loadingUsers = ref(new Set());
+const loadingUsers = ref(new Set<string>());
 
 const currentUser = computed(() => authStore.user);
 
-const api = axios.create({
-  baseURL: '/api/auth',
-  headers: {
-    Authorization: `Bearer ${authStore.token}`
-  }
-});
+function getApiInstance() {
+  return axios.create({
+    baseURL: '/api/auth',
+    headers: {
+      Authorization: `Bearer ${authStore.token}`
+    }
+  });
+}
 
 async function loadUsers() {
   try {
+    const api = getApiInstance();
     const res = await api.get<{ users: FirebaseUserRecord[] }>('/users');
     users.value = res.data.users.map((u: FirebaseUserRecord) => ({
       id: u.uid,
@@ -48,7 +51,7 @@ async function loadUsers() {
     }));
   } catch (error) {
     showSnackbar('Failed to load users', 'error');
-    console.error(error);
+    console.error('Load users error:', error);
   }
 }
 
@@ -73,12 +76,13 @@ async function deleteUser() {
   }
 
   try {
+    const api = getApiInstance();
     await api.delete(`/users/${userToDelete.value.id}`);
     users.value = users.value.filter((u: User) => u.id !== userToDelete.value?.id);
     showSnackbar('User deleted successfully');
   } catch (error) {
     showSnackbar('Failed to delete user', 'error');
-    console.error(error);
+    console.error('Delete user error:', error);
   }
 
   showConfirmDialog.value = false;
@@ -94,8 +98,14 @@ async function updateUserRole(user: User, newRole: string) {
   loadingUsers.value.add(user.id);
   
   try {
+    const api = getApiInstance();
+    
     // Update the API first
-    await api.put(`/users/${user.id}`, { role: newRole });
+    const response = await api.put(`/users/${user.id}`, { 
+      role: newRole 
+    });
+    
+    console.log('Role update response:', response.data);
     
     // Only update local state after successful API call
     const idx = users.value.findIndex((u: User) => u.id === user.id);
@@ -104,17 +114,19 @@ async function updateUserRole(user: User, newRole: string) {
     }
     
     showSnackbar(`Role updated for ${user.email} to ${newRole}`);
-  } catch (error) {
+  } catch (error: any) {
+    console.error('Role update error:', error);
+    
     // Revert the local change if API call failed
     const idx = users.value.findIndex((u: User) => u.id === user.id);
     if (idx !== -1) {
       users.value[idx].role = originalRole;
     }
     
-    showSnackbar('Failed to update role', 'error');
-    console.error('Role update error:', error);
+    const errorMessage = error.response?.data?.error || 'Failed to update role';
+    showSnackbar(errorMessage, 'error');
     
-    // Optional: Reload users to ensure we have the correct state
+    // Reload users to ensure we have the correct state
     await loadUsers();
   } finally {
     // Remove user from loading set
@@ -126,12 +138,13 @@ async function resetAllData() {
   if (!confirm('Are you sure you want to reset all users except yourself? This will delete all other users.')) return;
 
   try {
+    const api = getApiInstance();
     await api.delete('/reset');
     await loadUsers();
     showSnackbar('All users except current have been deleted.');
   } catch (error) {
     showSnackbar('Failed to reset users', 'error');
-    console.error(error);
+    console.error('Reset error:', error);
   }
 }
 
